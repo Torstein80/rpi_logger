@@ -130,6 +130,24 @@
           <h2>Recent trend for selected period</h2>
           <div class="hint">Hover over a point to inspect the exact slot, alias, temperature, local timestamp, epoch, and reading status.</div>
         </div>
+        <div class="chart-controls">
+          <label class="chart-control">
+            Chart style
+            <select id="chart-style-select">
+              <option value="clean">Clean lines</option>
+              <option value="small-points">Lines + small points</option>
+              <option value="large-points">Lines + large points</option>
+            </select>
+          </label>
+          <label class="chart-control">
+            Line width
+            <select id="chart-width-select">
+              <option value="1.5">Thin</option>
+              <option value="2" selected>Normal</option>
+              <option value="3">Bold</option>
+            </select>
+          </label>
+        </div>
       </div>
       <div id="chart-session-caption" class="hint"></div>
       <div class="chart-wrap">
@@ -241,10 +259,14 @@
     const chartLegend = document.getElementById("chart-legend");
     const chartCaption = document.getElementById("chart-session-caption");
     const chartTooltip = document.getElementById("chart-tooltip");
+    const chartStyleSelect = document.getElementById("chart-style-select");
+    const chartWidthSelect = document.getElementById("chart-width-select");
 
     let sensorSlotsState = sensorSlotsSeed.slice();
     let slotEditorDirty = false;
     let selectedSessionId = initialChartSession ? initialChartSession.id : null;
+    let currentChartSession = initialChartSession;
+    let currentChartRows = chartSeedRows;
 
     function nowEpoch() {
       return Math.floor(Date.now() / 1000);
@@ -663,6 +685,19 @@
       return labels.join('');
     }
 
+    function chartOptions() {
+      return {
+        style: chartStyleSelect.value || 'clean',
+        lineWidth: Number(chartWidthSelect.value || 2),
+      };
+    }
+
+    function visiblePointRadius(style) {
+      if (style === 'large-points') return 4;
+      if (style === 'small-points') return 2.5;
+      return 0;
+    }
+
     function renderTrendChart(session, rows) {
       chartLegend.innerHTML = '';
       trendChart.innerHTML = '';
@@ -672,6 +707,10 @@
         return;
       }
       chartCaption.textContent = `Showing the latest ${rows.length} rows from period "${session.name}" (${session.timezone_offset}).`;
+
+      const options = chartOptions();
+      const pointRadius = visiblePointRadius(options.style);
+      const lineWidth = options.lineWidth;
 
       const width = 800;
       const height = 260;
@@ -719,18 +758,28 @@
           return `${x},${y}`;
         }).join(' ');
 
-        trendChart.innerHTML += `<polyline points="${points}" class="series ${cssClass}" fill="none" />`;
+        trendChart.innerHTML += `<polyline points="${points}" class="series ${cssClass}" fill="none" style="stroke-width:${lineWidth}px" />`;
         items.forEach((row) => {
           trendChart.innerHTML += `
             <circle
-              class="chart-point ${cssClass} ${row.is_substituted ? 'substituted-point' : ''}"
+              class="chart-hit-area"
               cx="${row._chartX}"
               cy="${row._chartY}"
-              r="4"
+              r="8"
               data-key="${key}"
               data-epoch="${row.sample_epoch}"
             ></circle>
           `;
+          if (pointRadius > 0) {
+            trendChart.innerHTML += `
+              <circle
+                class="chart-point ${cssClass} ${row.is_substituted ? 'substituted-point' : ''}"
+                cx="${row._chartX}"
+                cy="${row._chartY}"
+                r="${pointRadius}"
+              ></circle>
+            `;
+          }
         });
 
         const label = items[items.length - 1].sensor_name;
@@ -738,7 +787,7 @@
         chartLegend.innerHTML += `<span class="legend-item"><span class="legend-swatch ${cssClass}"></span>${label}: ${temp} °C</span>`;
       });
 
-      const pointElements = Array.from(trendChart.querySelectorAll('.chart-point'));
+      const pointElements = Array.from(trendChart.querySelectorAll('.chart-hit-area'));
       const allRows = Object.values(grouped).flat();
       pointElements.forEach((point) => {
         const epoch = Number(point.dataset.epoch);
@@ -753,6 +802,8 @@
 
     async function refreshReadings(sessionId) {
       if (!sessionId) {
+        currentChartSession = null;
+        currentChartRows = [];
         renderLatestReadings([]);
         renderTrendChart(null, []);
         return;
@@ -760,6 +811,8 @@
       const response = await fetch(`/api/sessions/${sessionId}/readings?limit=200`);
       if (!response.ok) return;
       const data = await response.json();
+      currentChartSession = data.session;
+      currentChartRows = data.items;
       renderLatestReadings(data.items);
       renderTrendChart(data.session, data.items);
     }
@@ -817,6 +870,17 @@
       updateEpochPreview();
     });
     timezoneOffsetInput.addEventListener('input', updateEpochPreview);
+
+    chartStyleSelect.value = localStorage.getItem('chartStyleMode') || 'clean';
+    chartWidthSelect.value = localStorage.getItem('chartLineWidth') || '2';
+    chartStyleSelect.addEventListener('change', () => {
+      localStorage.setItem('chartStyleMode', chartStyleSelect.value);
+      renderTrendChart(currentChartSession, currentChartRows);
+    });
+    chartWidthSelect.addEventListener('change', () => {
+      localStorage.setItem('chartLineWidth', chartWidthSelect.value);
+      renderTrendChart(currentChartSession, currentChartRows);
+    });
 
     if (!startEpochInput.value) {
       startEpochInput.value = nowEpoch();

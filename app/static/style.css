@@ -333,6 +333,29 @@ a:hover { text-decoration: underline; }
   margin-top: 10px;
 }
 
+
+.chart-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: end;
+}
+
+.chart-control {
+  min-width: 160px;
+  font-size: 0.9rem;
+}
+
+.chart-control select {
+  min-width: 160px;
+}
+
+.chart-hit-area {
+  fill: transparent;
+  stroke: transparent;
+  cursor: pointer;
+}
+
 .chart-tooltip {
   position: absolute;
   z-index: 20;
@@ -363,14 +386,17 @@ a:hover { text-decoration: underline; }
 }
 
 .series {
-  stroke-width: 2.5;
+  stroke-width: 2;
   fill: none;
+  stroke-linejoin: round;
+  stroke-linecap: round;
 }
 
 .chart-point {
   stroke: rgba(15, 23, 42, 0.9);
   stroke-width: 1;
   cursor: pointer;
+  opacity: 0.95;
 }
 
 .substituted-point {
