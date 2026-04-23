@@ -3,36 +3,38 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Haga RPI Temperature Logger</title>
+  <title>hagasolutions RPi temp logger</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <main class="container">
     <header class="hero">
       <div>
-        <h1>Haga RPI Temperature Logger</h1>
-        <p>Raspberry Pi 1-Wire logger for long standalone runs with LAN access, local database storage, and export tools.</p>
+        <h1>hagasolutions RPi temp logger</h1>
+        <p>Raspberry Pi 1-Wire logger for long standalone runs with local storage, LAN access, resilient missing-sensor fallback, and up to {{ max_sensor_slots }} configured sensor slots.</p>
       </div>
       <div class="badge-group">
         <span class="badge">Default UI polling: {{ default_poll_seconds }} s</span>
         <span class="badge">Default interval: {{ default_interval_seconds }} s</span>
-        <span class="badge">Timezone default: {{ default_timezone_offset }}</span>
+        <span class="badge">Default timezone offset: {{ default_timezone_offset }}</span>
+        <span class="badge">Max sensor slots: {{ max_sensor_slots }}</span>
       </div>
     </header>
 
     <section class="grid two-col">
       <div class="card">
-        <h2>Logger control</h2>
+        <h2>Start logging</h2>
         <form id="start-form" class="stack">
           <label>
             Logging period name
             <input id="session-name" type="text" maxlength="120" placeholder="Example: endurance-test-01" required />
           </label>
+
           <label>
             Start epoch
-            <input id="start-epoch" type="number" min="0" step="1" required />
+            <input id="start-epoch" type="number" min="0" step="1" />
           </label>
-          <div class="hint">Displayed as both epoch and local time below.</div>
+          <div class="hint">Defaults to the current epoch when you press Start logging. You can still enter a future epoch to schedule a later start.</div>
           <div id="epoch-preview" class="preview"></div>
 
           <label>
@@ -41,13 +43,22 @@
           </label>
 
           <label>
-            Timezone offset
+            Timezone location
+            <select id="timezone-location">
+              <option value="manual">Manual offset</option>
+              {% for item in timezone_locations %}
+                <option value="{{ item.value }}" {% if item.value == default_timezone_location %}selected{% endif %}>{{ item.label }} (UTC{{ item.offset_text }})</option>
+              {% endfor %}
+            </select>
+          </label>
+
+          <label>
+            UTC offset
             <input id="timezone-offset" type="text" value="{{ default_timezone_offset }}" placeholder="+02:00" required />
           </label>
 
           <div class="actions">
-            <button type="button" id="fill-now-btn">Use current epoch</button>
-            <button type="submit">Create logging period</button>
+            <button type="submit">Start logging</button>
           </div>
         </form>
         <div id="form-message" class="message"></div>
@@ -60,12 +71,14 @@
             <div class="kv">
               <div><strong>Name:</strong> {{ active_session.name }}</div>
               <div><strong>Status:</strong> <span class="status status-{{ active_session.status }}">{{ active_session.status }}</span></div>
-              <div><strong>Start epoch:</strong> {{ active_session.start_epoch }}</div>
-              <div><strong>Start local:</strong> {{ active_session.actual_start_local or active_session.scheduled_start_local }}</div>
+              <div><strong>Scheduled start epoch:</strong> {{ active_session.scheduled_start_epoch }}</div>
+              <div><strong>Scheduled local:</strong> {{ active_session.scheduled_start_local }}</div>
+              <div><strong>Actual start epoch:</strong> {{ active_session.actual_start_epoch or '-' }}</div>
+              <div><strong>Actual start local:</strong> {{ active_session.actual_start_local or '-' }}</div>
               <div><strong>Interval:</strong> {{ active_session.interval_seconds }} s</div>
               <div><strong>Timezone:</strong> {{ active_session.timezone_offset }}</div>
             </div>
-            <button id="stop-btn" data-session-id="{{ active_session.id }}">Stop logging period</button>
+            <button id="stop-btn" data-session-id="{{ active_session.id }}">Stop logging</button>
           {% else %}
             <p>No logging period is active or scheduled.</p>
           {% endif %}
@@ -73,24 +86,56 @@
       </div>
     </section>
 
+    <section class="card">
+      <div class="section-heading">
+        <div>
+          <h2>Sensor slots and aliases</h2>
+          <div class="hint">Assign up to {{ max_sensor_slots }} sensors. If a configured sensor disappears, logging continues and records the configured fallback value.</div>
+        </div>
+        <button type="button" id="save-slots-btn">Save slot configuration</button>
+      </div>
+      <div id="slots-message" class="message"></div>
+      <div id="slot-config-grid" class="slot-config-grid"></div>
+    </section>
+
     <section class="grid two-col">
       <div class="card">
-        <h2>Current sensors</h2>
-        <div id="current-sensors" class="stack"></div>
+        <h2>Configured slot status</h2>
+        <div id="configured-slots" class="stack"></div>
       </div>
+      <div class="card">
+        <h2>Detected 1-Wire devices</h2>
+        <div id="detected-sensors" class="stack"></div>
+      </div>
+    </section>
+
+    <section class="grid two-col">
       <div class="card">
         <h2>Scheduler state</h2>
         <div id="scheduler-state" class="stack">
           <div class="hint">Waiting for first refresh…</div>
         </div>
       </div>
+      <div class="card">
+        <h2>Storage</h2>
+        <div id="storage-state" class="stack">
+          <div class="hint">Waiting for first refresh…</div>
+        </div>
+      </div>
     </section>
 
-    <section class="card">
-      <h2>Recent trend for selected period</h2>
-      <div class="hint">The chart uses the active period if one exists, otherwise the newest saved period.</div>
+    <section class="card chart-card">
+      <div class="section-heading">
+        <div>
+          <h2>Recent trend for selected period</h2>
+          <div class="hint">Hover over a point to inspect the exact slot, alias, temperature, local timestamp, epoch, and reading status.</div>
+        </div>
+      </div>
       <div id="chart-session-caption" class="hint"></div>
-      <svg id="trend-chart" viewBox="0 0 800 260" preserveAspectRatio="none" aria-label="Temperature chart"></svg>
+      <div class="chart-wrap">
+        <svg id="trend-chart" viewBox="0 0 800 260" preserveAspectRatio="none" aria-label="Temperature chart"></svg>
+        <div id="chart-tooltip" class="chart-tooltip hidden"></div>
+      </div>
       <div id="chart-legend" class="legend"></div>
     </section>
 
@@ -102,12 +147,14 @@
             <tr>
               <th>Epoch</th>
               <th>Local time</th>
+              <th>Slot</th>
               <th>Sensor</th>
               <th>Temperature (°C)</th>
+              <th>Status</th>
             </tr>
           </thead>
           <tbody id="latest-readings-body">
-            <tr><td colspan="4">No readings yet.</td></tr>
+            <tr><td colspan="6">No readings yet.</td></tr>
           </tbody>
         </table>
       </div>
@@ -126,6 +173,7 @@
               <th>Stop</th>
               <th>Interval</th>
               <th>Timezone</th>
+              <th>Actions</th>
               <th>Exports</th>
             </tr>
           </thead>
@@ -137,9 +185,17 @@
                   <td>{{ session.name }}</td>
                   <td><span class="status status-{{ session.status }}">{{ session.status }}</span></td>
                   <td>{{ session.actual_start_local or session.scheduled_start_local }}</td>
-                  <td>{{ session.stop_local or "-" }}</td>
+                  <td>{{ session.stop_local or '-' }}</td>
                   <td>{{ session.interval_seconds }} s</td>
                   <td>{{ session.timezone_offset }}</td>
+                  <td class="actions-cell">
+                    <button type="button" class="button-secondary view-session-btn" data-session-id="{{ session.id }}">View</button>
+                    {% if session.status == 'completed' %}
+                      <button type="button" class="button-danger delete-session-btn" data-session-id="{{ session.id }}" data-session-name="{{ session.name }}">Delete</button>
+                    {% else %}
+                      <button type="button" class="button-danger" disabled>Delete</button>
+                    {% endif %}
+                  </td>
                   <td class="exports">
                     <a href="/api/sessions/{{ session.id }}/export?format=csv">CSV</a>
                     <a href="/api/sessions/{{ session.id }}/export?format=txt">TXT</a>
@@ -148,7 +204,7 @@
                 </tr>
               {% endfor %}
             {% else %}
-              <tr><td colspan="8">No periods saved yet.</td></tr>
+              <tr><td colspan="9">No periods saved yet.</td></tr>
             {% endif %}
           </tbody>
         </table>
@@ -158,25 +214,52 @@
 
   <script>
     const DEFAULT_POLL_SECONDS = {{ default_poll_seconds | tojson }};
-    const initialChartSessionId = {{ chart_session_id | tojson }};
+    const MAX_SENSOR_SLOTS = {{ max_sensor_slots | tojson }};
+    const DEFAULT_FALLBACK_TEMPERATURE_C = {{ default_fallback_temperature_c | tojson }};
+    const DEFAULT_TIMEZONE_LOCATION = {{ default_timezone_location | tojson }};
+    const initialChartSession = {{ chart_session | tojson }};
     const chartSeedRows = {{ chart_seed_rows | tojson }};
+    const sensorSlotsSeed = {{ sensor_slots | tojson }};
+    const timezoneLocations = {{ timezone_locations | tojson }};
 
     const startEpochInput = document.getElementById("start-epoch");
     const intervalInput = document.getElementById("interval-seconds");
+    const timezoneLocationSelect = document.getElementById("timezone-location");
     const timezoneOffsetInput = document.getElementById("timezone-offset");
     const epochPreview = document.getElementById("epoch-preview");
     const formMessage = document.getElementById("form-message");
+    const slotsMessage = document.getElementById("slots-message");
     const latestReadingsBody = document.getElementById("latest-readings-body");
-    const currentSensorsBox = document.getElementById("current-sensors");
+    const configuredSlotsBox = document.getElementById("configured-slots");
+    const detectedSensorsBox = document.getElementById("detected-sensors");
+    const slotConfigGrid = document.getElementById("slot-config-grid");
     const sessionsBody = document.getElementById("sessions-body");
     const activeSessionBox = document.getElementById("active-session-box");
     const schedulerState = document.getElementById("scheduler-state");
+    const storageState = document.getElementById("storage-state");
     const trendChart = document.getElementById("trend-chart");
     const chartLegend = document.getElementById("chart-legend");
     const chartCaption = document.getElementById("chart-session-caption");
+    const chartTooltip = document.getElementById("chart-tooltip");
+
+    let sensorSlotsState = sensorSlotsSeed.slice();
+    let slotEditorDirty = false;
+    let selectedSessionId = initialChartSession ? initialChartSession.id : null;
 
     function nowEpoch() {
       return Math.floor(Date.now() / 1000);
+    }
+
+    function pad(value) {
+      return String(value).padStart(2, "0");
+    }
+
+    function safeText(value, fallback = "-") {
+      return value === null || value === undefined || value === "" ? fallback : value;
+    }
+
+    function formatTemp(value) {
+      return value === null || value === undefined ? "-" : `${Number(value).toFixed(3)} °C`;
     }
 
     function formatEpochLocal(epoch, offsetText) {
@@ -189,30 +272,162 @@
       const offsetMinutes = sign * (hours * 60 + minutes);
       const date = new Date((epoch + offsetMinutes * 60) * 1000);
       const month = date.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
-      const pad = (value) => String(value).padStart(2, "0");
       return `${date.getUTCFullYear()}-${month}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
     }
 
-    function updateEpochPreview() {
-      const epoch = Number(startEpochInput.value || 0);
-      const offset = timezoneOffsetInput.value || "+00:00";
-      epochPreview.textContent = `Epoch: ${epoch} | Local time: ${formatEpochLocal(epoch, offset)}`;
+    function statusBadge(statusText) {
+      const clean = String(statusText || "unknown").trim();
+      const css = clean.toLowerCase().replace(/[\s/]+/g, "-").replace(/[^a-z0-9_-]/g, "-");
+      return `<span class="status status-${css}">${clean}</span>`;
     }
 
-    document.getElementById("fill-now-btn").addEventListener("click", () => {
-      startEpochInput.value = nowEpoch();
-      updateEpochPreview();
+    function timezoneOffsetForLocation(location, epoch) {
+      const date = new Date((epoch || nowEpoch()) * 1000);
+      const formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: location,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      });
+      const parts = Object.fromEntries(
+        formatter.formatToParts(date)
+          .filter((part) => part.type !== "literal")
+          .map((part) => [part.type, part.value])
+      );
+      const asUtc = Date.UTC(
+        Number(parts.year),
+        Number(parts.month) - 1,
+        Number(parts.day),
+        Number(parts.hour),
+        Number(parts.minute),
+        Number(parts.second)
+      );
+      return Math.round((asUtc - date.getTime()) / 60000);
+    }
+
+    function offsetMinutesToText(offsetMinutes) {
+      const sign = offsetMinutes >= 0 ? "+" : "-";
+      const total = Math.abs(offsetMinutes);
+      const hours = Math.floor(total / 60);
+      const minutes = total % 60;
+      return `${sign}${pad(hours)}:${pad(minutes)}`;
+    }
+
+    function updateTimezoneOffsetInput() {
+      const selected = timezoneLocationSelect.value;
+      if (selected && selected !== "manual") {
+        timezoneOffsetInput.readOnly = true;
+        timezoneOffsetInput.value = offsetMinutesToText(timezoneOffsetForLocation(selected, Number(startEpochInput.value || nowEpoch())));
+      } else {
+        timezoneOffsetInput.readOnly = false;
+      }
+    }
+
+    function updateEpochPreview() {
+      const epochValue = startEpochInput.value === "" ? nowEpoch() : Number(startEpochInput.value);
+      const offsetText = timezoneOffsetInput.value || "+00:00";
+      epochPreview.textContent = `Epoch ${epochValue} → local time ${formatEpochLocal(epochValue, offsetText)} (UTC${offsetText})`;
+    }
+
+    function populateSlotEditors(detectedSensors) {
+      const detectedOptions = (detectedSensors || []).map((sensor) => ({
+        value: sensor.sensor_id,
+        label: `${sensor.sensor_name} (${sensor.sensor_id})`,
+      }));
+      const cards = [];
+      for (let slotNo = 1; slotNo <= MAX_SENSOR_SLOTS; slotNo += 1) {
+        const seed = sensorSlotsState.find((item) => Number(item.slot_no) === slotNo) || {
+          slot_no: slotNo,
+          enabled: false,
+          alias: "",
+          sensor_id: "",
+          fallback_value_c: DEFAULT_FALLBACK_TEMPERATURE_C,
+        };
+        const optionsMarkup = [
+          `<option value="">Unassigned</option>`,
+          ...detectedOptions.map((option) => `<option value="${option.value}" ${option.value === (seed.sensor_id || "") ? "selected" : ""}>${option.label}</option>`),
+        ].join("");
+        cards.push(`
+          <div class="slot-editor" data-slot-no="${slotNo}">
+            <div class="slot-editor-head">
+              <strong>Slot ${slotNo}</strong>
+              <label class="checkbox-inline">
+                <input class="slot-enabled" type="checkbox" ${seed.enabled ? "checked" : ""} />
+                Enabled
+              </label>
+            </div>
+            <label>
+              Alias
+              <input class="slot-alias" type="text" maxlength="120" value="${seed.alias || ""}" placeholder="Example: tank-top" />
+            </label>
+            <label>
+              Sensor ID
+              <select class="slot-sensor-id">${optionsMarkup}</select>
+            </label>
+            <label>
+              Fallback value (°C)
+              <input class="slot-fallback" type="number" step="0.1" value="${Number(seed.fallback_value_c ?? DEFAULT_FALLBACK_TEMPERATURE_C)}" />
+            </label>
+          </div>
+        `);
+      }
+      slotConfigGrid.innerHTML = cards.join("");
+    }
+
+    slotConfigGrid.addEventListener("input", () => {
+      slotEditorDirty = true;
+    });
+    slotConfigGrid.addEventListener("change", () => {
+      slotEditorDirty = true;
     });
 
-    startEpochInput.addEventListener("input", updateEpochPreview);
-    timezoneOffsetInput.addEventListener("input", updateEpochPreview);
+    function collectSlotPayload() {
+      return Array.from(document.querySelectorAll(".slot-editor")).map((editor) => ({
+        slot_no: Number(editor.dataset.slotNo),
+        enabled: editor.querySelector(".slot-enabled").checked,
+        alias: editor.querySelector(".slot-alias").value.trim(),
+        sensor_id: editor.querySelector(".slot-sensor-id").value || null,
+        fallback_value_c: Number(editor.querySelector(".slot-fallback").value || DEFAULT_FALLBACK_TEMPERATURE_C),
+      }));
+    }
+
+    async function saveSlots() {
+      slotsMessage.textContent = "";
+      const response = await fetch("/api/sensor-slots", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slots: collectSlotPayload() }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        slotsMessage.textContent = data.detail || "Could not save sensor slots.";
+        slotsMessage.className = "message error";
+        return;
+      }
+      sensorSlotsState = (data.items || []).map((item) => ({
+        slot_no: item.slot_no,
+        enabled: item.enabled,
+        alias: item.alias || "",
+        sensor_id: item.sensor_id || "",
+        fallback_value_c: item.fallback_value_c,
+      }));
+      slotEditorDirty = false;
+      slotsMessage.textContent = data.message || "Sensor slots updated.";
+      slotsMessage.className = "message success";
+      await refreshAll();
+    }
 
     async function createSession(event) {
       event.preventDefault();
       formMessage.textContent = "";
+      const epochValue = startEpochInput.value === "" ? nowEpoch() : Number(startEpochInput.value);
       const payload = {
         name: document.getElementById("session-name").value.trim(),
-        start_epoch: Number(startEpochInput.value),
+        start_epoch: epochValue,
         interval_seconds: Number(intervalInput.value),
         timezone_offset: timezoneOffsetInput.value.trim(),
       };
@@ -223,17 +438,16 @@
       });
       const data = await response.json();
       if (!response.ok) {
-        formMessage.textContent = data.detail || "Could not create logging period.";
+        formMessage.textContent = data.detail || "Could not start logging.";
         formMessage.className = "message error";
         return;
       }
-      formMessage.textContent = `Created logging period "${data.session.name}".`;
+      formMessage.textContent = `Started logging period "${data.session.name}".`;
       formMessage.className = "message success";
       document.getElementById("session-name").value = "";
+      selectedSessionId = data.session.id;
       await refreshAll();
     }
-
-    document.getElementById("start-form").addEventListener("submit", createSession);
 
     async function stopActiveSession(sessionId) {
       const response = await fetch(`/api/sessions/${sessionId}/stop`, { method: "POST" });
@@ -241,6 +455,23 @@
       if (!response.ok) {
         alert(data.detail || "Could not stop logging period.");
         return;
+      }
+      await refreshAll();
+    }
+
+    async function deleteSession(sessionId, sessionName) {
+      const confirmed = window.confirm(`Delete saved period "${sessionName}"? This will also delete its logged readings.`);
+      if (!confirmed) {
+        return;
+      }
+      const response = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+      const data = await response.json();
+      if (!response.ok) {
+        alert(data.detail || "Could not delete logging period.");
+        return;
+      }
+      if (selectedSessionId === sessionId) {
+        selectedSessionId = null;
       }
       await refreshAll();
     }
@@ -253,34 +484,39 @@
       activeSessionBox.innerHTML = `
         <div class="kv">
           <div><strong>Name:</strong> ${activeSession.name}</div>
-          <div><strong>Status:</strong> <span class="status status-${activeSession.status}">${activeSession.status}</span></div>
+          <div><strong>Status:</strong> ${statusBadge(activeSession.status)}</div>
           <div><strong>Scheduled start epoch:</strong> ${activeSession.scheduled_start_epoch}</div>
           <div><strong>Scheduled local:</strong> ${activeSession.scheduled_start_local || "-"}</div>
-          <div><strong>Actual start epoch:</strong> ${activeSession.actual_start_epoch ?? "-"}</div>
+          <div><strong>Actual start epoch:</strong> ${safeText(activeSession.actual_start_epoch)}</div>
           <div><strong>Actual start local:</strong> ${activeSession.actual_start_local || "-"}</div>
           <div><strong>Interval:</strong> ${activeSession.interval_seconds} s</div>
           <div><strong>Timezone:</strong> ${activeSession.timezone_offset}</div>
         </div>
-        <button id="stop-btn" data-session-id="${activeSession.id}">Stop logging period</button>
+        <button id="stop-btn" data-session-id="${activeSession.id}">Stop logging</button>
       `;
-      const stopBtn = document.getElementById("stop-btn");
-      stopBtn.addEventListener("click", () => stopActiveSession(stopBtn.dataset.sessionId));
+      document.getElementById("stop-btn").addEventListener("click", () => stopActiveSession(activeSession.id));
     }
 
     function renderSessions(items) {
       if (!items.length) {
-        sessionsBody.innerHTML = '<tr><td colspan="8">No periods saved yet.</td></tr>';
+        sessionsBody.innerHTML = '<tr><td colspan="9">No periods saved yet.</td></tr>';
         return;
       }
       sessionsBody.innerHTML = items.map((session) => `
-        <tr>
+        <tr class="${selectedSessionId === session.id ? 'selected-row' : ''}">
           <td>${session.id}</td>
           <td>${session.name}</td>
-          <td><span class="status status-${session.status}">${session.status}</span></td>
+          <td>${statusBadge(session.status)}</td>
           <td>${session.actual_start_local || session.scheduled_start_local || "-"}</td>
           <td>${session.stop_local || "-"}</td>
           <td>${session.interval_seconds} s</td>
           <td>${session.timezone_offset}</td>
+          <td class="actions-cell">
+            <button type="button" class="button-secondary view-session-btn" data-session-id="${session.id}">View</button>
+            ${session.status === 'completed'
+              ? `<button type="button" class="button-danger delete-session-btn" data-session-id="${session.id}" data-session-name="${session.name}">Delete</button>`
+              : `<button type="button" class="button-danger" disabled>Delete</button>`}
+          </td>
           <td class="exports">
             <a href="/api/sessions/${session.id}/export?format=csv">CSV</a>
             <a href="/api/sessions/${session.id}/export?format=txt">TXT</a>
@@ -288,98 +524,230 @@
           </td>
         </tr>
       `).join("");
+
+      sessionsBody.querySelectorAll(".view-session-btn").forEach((button) => {
+        button.addEventListener("click", async () => {
+          selectedSessionId = Number(button.dataset.sessionId);
+          await refreshAll();
+        });
+      });
+      sessionsBody.querySelectorAll(".delete-session-btn").forEach((button) => {
+        button.addEventListener("click", () => deleteSession(Number(button.dataset.sessionId), button.dataset.sessionName));
+      });
     }
 
-    function renderCurrentSensors(status) {
-      const sensors = status.current_sensors || [];
-      if (!sensors.length) {
-        currentSensorsBox.innerHTML = `<div class="hint">${status.sensor_error || "No sensors detected."}</div>`;
+    function renderConfiguredSlots(status) {
+      const slots = status.configured_slots || [];
+      if (!slots.length) {
+        configuredSlotsBox.innerHTML = '<div class="hint">No sensor slots configured.</div>';
         return;
       }
-      currentSensorsBox.innerHTML = sensors.map((sensor) => `
+      configuredSlotsBox.innerHTML = slots.map((slot) => `
+        <div class="slot-runtime ${slot.enabled ? '' : 'slot-runtime-disabled'}">
+          <div class="slot-runtime-head">
+            <div>
+              <strong>Slot ${slot.slot_no}: ${slot.display_name}</strong>
+              <div class="hint">${safeText(slot.sensor_id, 'No sensor assigned')}</div>
+            </div>
+            ${statusBadge(slot.runtime_status)}
+          </div>
+          <div class="slot-metrics">
+            <div><strong>Current:</strong> ${formatTemp(slot.current_temperature_c)}</div>
+            <div><strong>Fallback:</strong> ${Number(slot.fallback_value_c).toFixed(1)} °C</div>
+            <div><strong>Last logged:</strong> ${formatTemp(slot.last_logged_temperature_c)}</div>
+            <div><strong>Last status:</strong> ${safeText(slot.last_logged_status)}</div>
+            <div><strong>Last epoch:</strong> ${safeText(slot.last_logged_epoch)}</div>
+            <div><strong>Substituted:</strong> ${slot.is_substituted ? 'yes' : 'no'}</div>
+          </div>
+          ${slot.current_error ? `<div class="hint error-text">${slot.current_error}</div>` : ''}
+        </div>
+      `).join("");
+    }
+
+    function renderDetectedSensors(status) {
+      const sensors = status.detected_sensors || [];
+      if (!sensors.length) {
+        detectedSensorsBox.innerHTML = '<div class="hint">No sensors currently detected on the 1-Wire bus.</div>';
+        return;
+      }
+      detectedSensorsBox.innerHTML = sensors.map((sensor) => `
         <div class="sensor-row">
           <div>
             <strong>${sensor.sensor_name}</strong>
             <div class="hint">${sensor.sensor_id}</div>
           </div>
-          <div class="temp">${Number(sensor.temperature_c).toFixed(3)} °C</div>
+          <div class="sensor-row-right">
+            <div class="temp">${formatTemp(sensor.temperature_c)}</div>
+            ${statusBadge(sensor.status === 'ok' ? 'online' : sensor.status)}
+          </div>
         </div>
       `).join("");
     }
 
     function renderSchedulerState(status) {
       schedulerState.innerHTML = `
+        <div><strong>Hostname:</strong> ${safeText(status.host_name)}</div>
         <div><strong>Host UTC epoch:</strong> ${status.host_time_epoch}</div>
-        <div><strong>Host UTC time:</strong> ${status.host_time_utc || "-"}</div>
+        <div><strong>Host UTC time:</strong> ${status.host_time_utc || '-'}</div>
         <div><strong>Configured UI poll:</strong> ${status.configured_poll_seconds} s</div>
         <div><strong>Detected sensors:</strong> ${status.sensor_count}</div>
-        <div><strong>Scheduler error:</strong> ${status.scheduler_error || "none"}</div>
+        <div><strong>Scheduler error:</strong> ${safeText(status.scheduler_error, 'none')}</div>
+      `;
+    }
+
+    function renderStorage(status) {
+      const disk = status.disk || {};
+      storageState.innerHTML = `
+        <div><strong>Database path:</strong> ${safeText(disk.db_path)}</div>
+        <div><strong>Database size:</strong> ${safeText(disk.db_size_mb, 0)} MiB</div>
+        <div><strong>Used:</strong> ${safeText(disk.used_gb, 0)} GiB (${safeText(disk.used_percent, 0)}%)</div>
+        <div><strong>Free:</strong> ${safeText(disk.free_gb, 0)} GiB</div>
+        <div><strong>Total:</strong> ${safeText(disk.total_gb, 0)} GiB</div>
       `;
     }
 
     function renderLatestReadings(items) {
       if (!items || !items.length) {
-        latestReadingsBody.innerHTML = '<tr><td colspan="4">No readings yet.</td></tr>';
+        latestReadingsBody.innerHTML = '<tr><td colspan="6">No readings yet.</td></tr>';
         return;
       }
       latestReadingsBody.innerHTML = items.slice(-20).reverse().map((row) => `
         <tr>
           <td>${row.sample_epoch}</td>
-          <td>${row.sample_time_local || "-"}</td>
+          <td>${row.sample_time_local || '-'}</td>
+          <td>${safeText(row.slot_no)}</td>
           <td>${row.sensor_name} <span class="hint">(${row.sensor_id})</span></td>
           <td>${Number(row.temperature_c).toFixed(4)}</td>
+          <td>${statusBadge(row.is_substituted ? `${row.status} / substituted` : row.status)}</td>
         </tr>
-      `).join("");
+      `).join('');
+    }
+
+    function hideChartTooltip() {
+      chartTooltip.classList.add('hidden');
+    }
+
+    function showChartTooltip(event, row, session) {
+      if (!session) return;
+      chartTooltip.innerHTML = `
+        <div><strong>${row.sensor_name}</strong> (slot ${safeText(row.slot_no)})</div>
+        <div>Temp: ${Number(row.temperature_c).toFixed(3)} °C</div>
+        <div>Status: ${row.status}${row.is_substituted ? ' / substituted' : ''}</div>
+        <div>Epoch: ${row.sample_epoch}</div>
+        <div>Local: ${row.sample_time_local || formatEpochLocal(row.sample_epoch, session.timezone_offset)}</div>
+        ${row.error_text ? `<div>Error: ${row.error_text}</div>` : ''}
+      `;
+      chartTooltip.classList.remove('hidden');
+      const wrapRect = trendChart.getBoundingClientRect();
+      const x = event.clientX - wrapRect.left + 12;
+      const y = event.clientY - wrapRect.top - 12;
+      chartTooltip.style.left = `${x}px`;
+      chartTooltip.style.top = `${y}px`;
+    }
+
+    function drawXAxisLabels(session, minEpoch, maxEpoch, width, height, padding) {
+      const tickCount = maxEpoch === minEpoch ? 1 : 4;
+      const labels = [];
+      for (let index = 0; index < tickCount; index += 1) {
+        const ratio = tickCount === 1 ? 0 : index / (tickCount - 1);
+        const epoch = Math.round(minEpoch + (maxEpoch - minEpoch) * ratio);
+        const x = padding + ratio * (width - padding * 2);
+        const local = formatEpochLocal(epoch, session.timezone_offset);
+        const [datePart, timePart] = local.split(' ');
+        labels.push(`
+          <line x1="${x}" y1="${height - padding}" x2="${x}" y2="${height - padding + 6}" class="axis" />
+          <text x="${x}" y="${height - padding + 20}" text-anchor="middle" class="axis-label">${timePart || local}</text>
+          <text x="${x}" y="${height - padding + 34}" text-anchor="middle" class="axis-label axis-label-small">${datePart || ''}</text>
+        `);
+      }
+      return labels.join('');
     }
 
     function renderTrendChart(session, rows) {
-      chartLegend.innerHTML = "";
-      trendChart.innerHTML = "";
+      chartLegend.innerHTML = '';
+      trendChart.innerHTML = '';
+      hideChartTooltip();
       if (!session || !rows || !rows.length) {
-        chartCaption.textContent = "No readings to plot yet.";
+        chartCaption.textContent = 'No readings to plot yet.';
         return;
       }
       chartCaption.textContent = `Showing the latest ${rows.length} rows from period "${session.name}" (${session.timezone_offset}).`;
 
       const width = 800;
       const height = 260;
-      const padding = 28;
+      const paddingLeft = 56;
+      const paddingRight = 32;
+      const paddingTop = 20;
+      const paddingBottom = 52;
+      const palette = ['line-a', 'line-b', 'line-c', 'line-d'];
+
       const grouped = {};
       rows.forEach((row) => {
-        if (!grouped[row.sensor_id]) grouped[row.sensor_id] = [];
-        grouped[row.sensor_id].push(row);
+        const key = row.slot_no || row.sensor_id;
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push({ ...row, sample_time_local: row.sample_time_local || formatEpochLocal(row.sample_epoch, session.timezone_offset) });
       });
 
       const temps = rows.map((row) => Number(row.temperature_c));
       const epochs = rows.map((row) => Number(row.sample_epoch));
-      const minTemp = Math.min(...temps);
-      const maxTemp = Math.max(...temps);
+      const minTempRaw = Math.min(...temps);
+      const maxTempRaw = Math.max(...temps);
+      const minTemp = minTempRaw - 0.2;
+      const maxTemp = maxTempRaw + 0.2;
       const minEpoch = Math.min(...epochs);
       const maxEpoch = Math.max(...epochs);
       const tempSpan = Math.max(maxTemp - minTemp, 0.5);
       const epochSpan = Math.max(maxEpoch - minEpoch, 1);
+      const plotWidth = width - paddingLeft - paddingRight;
+      const plotHeight = height - paddingTop - paddingBottom;
 
       trendChart.innerHTML += `
-        <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" class="axis" />
-        <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" class="axis" />
-        <text x="${padding}" y="${padding - 6}" class="axis-label">${maxTemp.toFixed(2)} °C</text>
-        <text x="${padding}" y="${height - 8}" class="axis-label">${minTemp.toFixed(2)} °C</text>
+        <line x1="${paddingLeft}" y1="${height - paddingBottom}" x2="${width - paddingRight}" y2="${height - paddingBottom}" class="axis" />
+        <line x1="${paddingLeft}" y1="${paddingTop}" x2="${paddingLeft}" y2="${height - paddingBottom}" class="axis" />
+        <text x="${paddingLeft - 8}" y="${paddingTop + 4}" text-anchor="end" class="axis-label">${maxTemp.toFixed(2)} °C</text>
+        <text x="${paddingLeft - 8}" y="${height - paddingBottom + 4}" text-anchor="end" class="axis-label">${minTemp.toFixed(2)} °C</text>
+        ${drawXAxisLabels(session, minEpoch, maxEpoch, width, height, paddingLeft)}
       `;
 
-      const palette = ["line-a", "line-b", "line-c", "line-d"];
-
-      Object.entries(grouped).forEach(([sensorId, items], index) => {
+      Object.entries(grouped).forEach(([key, items], index) => {
         const cssClass = palette[index % palette.length];
         const points = items.map((row) => {
-          const x = padding + ((row.sample_epoch - minEpoch) / epochSpan) * (width - padding * 2);
-          const y = (height - padding) - ((row.temperature_c - minTemp) / tempSpan) * (height - padding * 2);
+          const x = paddingLeft + ((row.sample_epoch - minEpoch) / epochSpan) * plotWidth;
+          const y = (height - paddingBottom) - ((row.temperature_c - minTemp) / tempSpan) * plotHeight;
+          row._chartX = x;
+          row._chartY = y;
           return `${x},${y}`;
-        }).join(" ");
+        }).join(' ');
+
         trendChart.innerHTML += `<polyline points="${points}" class="series ${cssClass}" fill="none" />`;
+        items.forEach((row) => {
+          trendChart.innerHTML += `
+            <circle
+              class="chart-point ${cssClass} ${row.is_substituted ? 'substituted-point' : ''}"
+              cx="${row._chartX}"
+              cy="${row._chartY}"
+              r="4"
+              data-key="${key}"
+              data-epoch="${row.sample_epoch}"
+            ></circle>
+          `;
+        });
 
         const label = items[items.length - 1].sensor_name;
         const temp = Number(items[items.length - 1].temperature_c).toFixed(3);
         chartLegend.innerHTML += `<span class="legend-item"><span class="legend-swatch ${cssClass}"></span>${label}: ${temp} °C</span>`;
+      });
+
+      const pointElements = Array.from(trendChart.querySelectorAll('.chart-point'));
+      const allRows = Object.values(grouped).flat();
+      pointElements.forEach((point) => {
+        const epoch = Number(point.dataset.epoch);
+        const key = point.dataset.key;
+        const row = allRows.find((item) => String(item.slot_no || item.sensor_id) === key && Number(item.sample_epoch) === epoch);
+        if (!row) return;
+        point.addEventListener('mouseenter', (event) => showChartTooltip(event, row, session));
+        point.addEventListener('mousemove', (event) => showChartTooltip(event, row, session));
+        point.addEventListener('mouseleave', hideChartTooltip);
       });
     }
 
@@ -398,15 +766,27 @@
 
     async function refreshAll() {
       const [statusResponse, sessionsResponse] = await Promise.all([
-        fetch("/api/status"),
-        fetch("/api/sessions?limit=20"),
+        fetch('/api/status'),
+        fetch('/api/sessions?limit=20'),
       ]);
 
       if (statusResponse.ok) {
         const status = await statusResponse.json();
         renderActiveSession(status.active_session);
-        renderCurrentSensors(status);
+        renderConfiguredSlots(status);
+        renderDetectedSensors(status);
         renderSchedulerState(status);
+        renderStorage(status);
+        sensorSlotsState = (status.configured_slots || []).map((item) => ({
+          slot_no: item.slot_no,
+          enabled: item.enabled,
+          alias: item.alias || '',
+          sensor_id: item.sensor_id || '',
+          fallback_value_c: item.fallback_value_c,
+        }));
+        if (!slotEditorDirty) {
+          populateSlotEditors(status.detected_sensors || []);
+        }
       }
 
       let sessionItems = [];
@@ -416,19 +796,38 @@
         renderSessions(sessionItems);
       }
 
-      const activeOrLatest = sessionItems.find((item) => item.status === "running" || item.status === "scheduled") || sessionItems[0];
-      await refreshReadings(activeOrLatest ? activeOrLatest.id : null);
+      if (!selectedSessionId) {
+        const activeOrLatest = sessionItems.find((item) => item.status === 'running' || item.status === 'scheduled') || sessionItems[0];
+        selectedSessionId = activeOrLatest ? activeOrLatest.id : null;
+      } else if (!sessionItems.find((item) => item.id === selectedSessionId)) {
+        selectedSessionId = sessionItems[0] ? sessionItems[0].id : null;
+      }
+      await refreshReadings(selectedSessionId);
     }
 
-    updateEpochPreview();
+    document.getElementById('save-slots-btn').addEventListener('click', saveSlots);
+    document.getElementById('start-form').addEventListener('submit', createSession);
+
+    timezoneLocationSelect.addEventListener('change', () => {
+      updateTimezoneOffsetInput();
+      updateEpochPreview();
+    });
+    startEpochInput.addEventListener('input', () => {
+      updateTimezoneOffsetInput();
+      updateEpochPreview();
+    });
+    timezoneOffsetInput.addEventListener('input', updateEpochPreview);
+
     if (!startEpochInput.value) {
       startEpochInput.value = nowEpoch();
-      updateEpochPreview();
     }
-    renderTrendChart(
-      initialChartSessionId ? { id: initialChartSessionId, name: "seed", timezone_offset: "{{ default_timezone_offset }}" } : null,
-      chartSeedRows
-    );
+    if (timezoneLocationSelect.value !== DEFAULT_TIMEZONE_LOCATION && timezoneLocationSelect.value !== 'manual') {
+      timezoneLocationSelect.value = DEFAULT_TIMEZONE_LOCATION;
+    }
+    updateTimezoneOffsetInput();
+    updateEpochPreview();
+    populateSlotEditors([]);
+    renderTrendChart(initialChartSession, chartSeedRows);
     refreshAll();
     setInterval(refreshAll, DEFAULT_POLL_SECONDS * 1000);
   </script>

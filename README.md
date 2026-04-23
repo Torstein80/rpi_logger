@@ -1,6 +1,6 @@
-# Haga RPI Temperature Logger
+# hagasolutions RPi temp logger
 
-A GitHub-ready Raspberry Pi 3 project for logging two 1-Wire temperature sensors to a local SQLite database, serving a web interface on the LAN, and exporting data as CSV, TXT, and Excel.
+A GitHub-ready Raspberry Pi project for logging up to four configured 1-Wire temperature sensors to a local SQLite database, serving a web interface on the LAN, and exporting data as CSV, TXT, and Excel.
 
 This starter is designed around these decisions:
 

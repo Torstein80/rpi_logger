@@ -3,6 +3,9 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, available_timezones
+
+DEFAULT_TIMEZONE_LOCATION = "Europe/Oslo"
 
 
 def parse_timezone_offset(offset_text: str) -> int:
@@ -33,6 +36,31 @@ def offset_minutes_to_text(offset_minutes: int) -> str:
     total = abs(offset_minutes)
     hours, minutes = divmod(total, 60)
     return f"{sign}{hours:02d}:{minutes:02d}"
+
+
+def timezone_offset_for_location(location: str, epoch: int | None = None) -> int:
+    zone_name = (location or DEFAULT_TIMEZONE_LOCATION).strip() or DEFAULT_TIMEZONE_LOCATION
+    moment = datetime.fromtimestamp(epoch or int(datetime.now(tz=timezone.utc).timestamp()), tz=timezone.utc)
+    tz = ZoneInfo(zone_name)
+    offset = moment.astimezone(tz).utcoffset() or timedelta(0)
+    return int(offset.total_seconds() // 60)
+
+
+ALL_TIMEZONE_LOCATIONS = sorted(tz for tz in available_timezones() if not tz.startswith(("Etc/", "Factory")))
+
+
+def build_timezone_location_options(reference_epoch: int | None = None) -> list[dict[str, str]]:
+    options: list[dict[str, str]] = []
+    for location in ALL_TIMEZONE_LOCATIONS:
+        offset_text = offset_minutes_to_text(timezone_offset_for_location(location, reference_epoch))
+        options.append(
+            {
+                "value": location,
+                "label": location.replace("_", " "),
+                "offset_text": offset_text,
+            }
+        )
+    return options
 
 
 def slugify(text: str) -> str:

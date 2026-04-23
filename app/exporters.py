@@ -22,10 +22,10 @@ def build_export(conn: sqlite3.Connection, session_row: sqlite3.Row, export_form
 
     readings = conn.execute(
         """
-        SELECT sample_epoch, sensor_id, sensor_name, temperature_c
+        SELECT sample_epoch, slot_no, sensor_id, sensor_name, temperature_c, status, is_substituted, error_text
         FROM temperature_readings
         WHERE session_id = ?
-        ORDER BY sample_epoch ASC, sensor_id ASC
+        ORDER BY sample_epoch ASC, slot_no ASC, sensor_id ASC
         """,
         (session_row["id"],),
     ).fetchall()
@@ -39,9 +39,13 @@ def build_export(conn: sqlite3.Connection, session_row: sqlite3.Row, export_form
                 "sample_epoch": item["sample_epoch"],
                 "sample_time_local": format_epoch(item["sample_epoch"], session_row["timezone_offset_minutes"]),
                 "timezone_offset": offset_minutes_to_text(session_row["timezone_offset_minutes"]),
+                "slot_no": item["slot_no"],
                 "sensor_id": item["sensor_id"],
                 "sensor_name": item["sensor_name"],
                 "temperature_c": round(item["temperature_c"], 4),
+                "status": item["status"],
+                "is_substituted": int(item["is_substituted"] or 0),
+                "error_text": item["error_text"] or "",
             }
         )
 
@@ -58,8 +62,18 @@ def build_export(conn: sqlite3.Connection, session_row: sqlite3.Row, export_form
 
 def _default_headers() -> list[str]:
     return [
-        "session_name", "session_id", "sample_epoch", "sample_time_local", "timezone_offset",
-        "sensor_id", "sensor_name", "temperature_c"
+        "session_name",
+        "session_id",
+        "sample_epoch",
+        "sample_time_local",
+        "timezone_offset",
+        "slot_no",
+        "sensor_id",
+        "sensor_name",
+        "temperature_c",
+        "status",
+        "is_substituted",
+        "error_text",
     ]
 
 
@@ -81,11 +95,14 @@ def _write_txt(output_path: Path, rows: list[dict], session_row: sqlite3.Row) ->
         handle.write(f"Interval seconds: {session_row['interval_seconds']}\n")
         handle.write(f"Timezone offset: {offset_minutes_to_text(session_row['timezone_offset_minutes'])}\n")
         handle.write("\n")
-        handle.write("sample_epoch\tsample_time_local\tsensor_id\tsensor_name\ttemperature_c\n")
+        handle.write(
+            "sample_epoch\tsample_time_local\tslot_no\tsensor_id\tsensor_name\ttemperature_c\tstatus\tis_substituted\terror_text\n"
+        )
         for row in rows:
             handle.write(
-                f"{row['sample_epoch']}\t{row['sample_time_local']}\t{row['sensor_id']}\t"
-                f"{row['sensor_name']}\t{row['temperature_c']}\n"
+                f"{row['sample_epoch']}\t{row['sample_time_local']}\t{row['slot_no']}\t{row['sensor_id']}\t"
+                f"{row['sensor_name']}\t{row['temperature_c']}\t{row['status']}\t{row['is_substituted']}\t"
+                f"{row['error_text']}\n"
             )
 
 
