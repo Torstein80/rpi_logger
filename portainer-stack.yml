@@ -1,6 +1,6 @@
 services:
   haga-rpi-temp-logger:
-    image: ghcr.io/YOUR_GITHUB_USER_OR_ORG/haga-rpi-temp-logger:latest
+    image: ghcr.io/torstein80/haga-rpi-temp-logger:latest
     container_name: haga-rpi-temp-logger
     restart: unless-stopped
     ports:
@@ -14,7 +14,7 @@ services:
       DB_PATH: "/data/logger.db"
       EXPORT_DIR: "/data/exports"
       W1_BASE_PATH: "/sys/bus/w1/devices"
-      SENSOR_LABELS: "28-xxxxxxxxxxxx:Probe A,28-yyyyyyyyyyyy:Probe B"
+      SENSOR_LABELS: "28-235ced1964ff:Probe A,28-485eed1964ff:Probe B,28-63bcfd1964ff:Probe C"
       HTTPS_CERTFILE: "/certs/cert.pem"
       HTTPS_KEYFILE: "/certs/key.pem"
     volumes:
