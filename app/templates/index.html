@@ -140,6 +140,20 @@
             </select>
           </label>
           <label class="chart-control">
+            Fill inside lines
+            <select id="chart-fill-select">
+              <option value="off" selected>Off</option>
+              <option value="soft">Soft fill</option>
+            </select>
+          </label>
+          <label class="chart-control">
+            Line shape
+            <select id="chart-curve-select">
+              <option value="straight" selected>Straight</option>
+              <option value="smooth">Smooth</option>
+            </select>
+          </label>
+          <label class="chart-control">
             Line width
             <select id="chart-width-select">
               <option value="1.5">Thin</option>
@@ -260,6 +274,8 @@
     const chartCaption = document.getElementById("chart-session-caption");
     const chartTooltip = document.getElementById("chart-tooltip");
     const chartStyleSelect = document.getElementById("chart-style-select");
+    const chartFillSelect = document.getElementById("chart-fill-select");
+    const chartCurveSelect = document.getElementById("chart-curve-select");
     const chartWidthSelect = document.getElementById("chart-width-select");
 
     let sensorSlotsState = sensorSlotsSeed.slice();
@@ -688,6 +704,8 @@
     function chartOptions() {
       return {
         style: chartStyleSelect.value || 'clean',
+        fill: chartFillSelect.value || 'off',
+        curve: chartCurveSelect.value || 'straight',
         lineWidth: Number(chartWidthSelect.value || 2),
       };
     }
@@ -696,6 +714,39 @@
       if (style === 'large-points') return 4;
       if (style === 'small-points') return 2.5;
       return 0;
+    }
+
+    function buildStraightPolyline(points) {
+      return points.map((point) => `${point.x},${point.y}`).join(' ');
+    }
+
+    function buildSmoothLinePath(points) {
+      if (!points.length) return '';
+      if (points.length === 1) {
+        return `M ${points[0].x} ${points[0].y}`;
+      }
+      let d = `M ${points[0].x} ${points[0].y}`;
+      for (let index = 1; index < points.length; index += 1) {
+        const previous = points[index - 1];
+        const current = points[index];
+        const midX = (previous.x + current.x) / 2;
+        d += ` Q ${midX} ${previous.y}, ${current.x} ${current.y}`;
+      }
+      return d;
+    }
+
+    function buildFillPath(points, baselineY, curveMode) {
+      if (!points.length) return '';
+      const first = points[0];
+      const last = points[points.length - 1];
+      if (curveMode === 'smooth') {
+        return `${buildSmoothLinePath(points)} L ${last.x} ${baselineY} L ${first.x} ${baselineY} Z`;
+      }
+      return [
+        `${first.x},${baselineY}`,
+        ...points.map((point) => `${point.x},${point.y}`),
+        `${last.x},${baselineY}`,
+      ].join(' ');
     }
 
     function renderTrendChart(session, rows) {
@@ -711,6 +762,7 @@
       const options = chartOptions();
       const pointRadius = visiblePointRadius(options.style);
       const lineWidth = options.lineWidth;
+      const fillOpacity = options.fill === 'soft' ? 0.12 : 0;
 
       const width = 800;
       const height = 260;
@@ -750,15 +802,30 @@
 
       Object.entries(grouped).forEach(([key, items], index) => {
         const cssClass = palette[index % palette.length];
-        const points = items.map((row) => {
+        const pointObjects = items.map((row) => {
           const x = paddingLeft + ((row.sample_epoch - minEpoch) / epochSpan) * plotWidth;
           const y = (height - paddingBottom) - ((row.temperature_c - minTemp) / tempSpan) * plotHeight;
           row._chartX = x;
           row._chartY = y;
-          return `${x},${y}`;
-        }).join(' ');
+          return { x, y };
+        });
 
-        trendChart.innerHTML += `<polyline points="${points}" class="series ${cssClass}" fill="none" style="stroke-width:${lineWidth}px" />`;
+        if (fillOpacity > 0) {
+          const fillPath = buildFillPath(pointObjects, height - paddingBottom, options.curve);
+          if (options.curve === 'smooth') {
+            trendChart.innerHTML += `<path d="${fillPath}" class="series-fill ${cssClass}" style="opacity:${fillOpacity}" />`;
+          } else {
+            trendChart.innerHTML += `<polygon points="${fillPath}" class="series-fill ${cssClass}" style="opacity:${fillOpacity}" />`;
+          }
+        }
+
+        if (options.curve === 'smooth') {
+          const linePath = buildSmoothLinePath(pointObjects);
+          trendChart.innerHTML += `<path d="${linePath}" class="series ${cssClass}" fill="none" style="stroke-width:${lineWidth}px" />`;
+        } else {
+          const polylinePoints = buildStraightPolyline(pointObjects);
+          trendChart.innerHTML += `<polyline points="${polylinePoints}" class="series ${cssClass}" fill="none" style="stroke-width:${lineWidth}px" />`;
+        }
         items.forEach((row) => {
           trendChart.innerHTML += `
             <circle
@@ -872,9 +939,19 @@
     timezoneOffsetInput.addEventListener('input', updateEpochPreview);
 
     chartStyleSelect.value = localStorage.getItem('chartStyleMode') || 'clean';
+    chartFillSelect.value = localStorage.getItem('chartFillMode') || 'off';
+    chartCurveSelect.value = localStorage.getItem('chartCurveMode') || 'straight';
     chartWidthSelect.value = localStorage.getItem('chartLineWidth') || '2';
     chartStyleSelect.addEventListener('change', () => {
       localStorage.setItem('chartStyleMode', chartStyleSelect.value);
+      renderTrendChart(currentChartSession, currentChartRows);
+    });
+    chartFillSelect.addEventListener('change', () => {
+      localStorage.setItem('chartFillMode', chartFillSelect.value);
+      renderTrendChart(currentChartSession, currentChartRows);
+    });
+    chartCurveSelect.addEventListener('change', () => {
+      localStorage.setItem('chartCurveMode', chartCurveSelect.value);
       renderTrendChart(currentChartSession, currentChartRows);
     });
     chartWidthSelect.addEventListener('change', () => {

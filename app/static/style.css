@@ -392,6 +392,11 @@ a:hover { text-decoration: underline; }
   stroke-linecap: round;
 }
 
+.series-fill {
+  stroke: none;
+  pointer-events: none;
+}
+
 .chart-point {
   stroke: rgba(15, 23, 42, 0.9);
   stroke-width: 1;
