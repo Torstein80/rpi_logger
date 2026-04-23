@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Haga RPI Temperature Logger</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main class="container">
+    <header class="hero">
+      <div>
+        <h1>Haga RPI Temperature Logger</h1>
+        <p>Raspberry Pi 1-Wire logger for long standalone runs with LAN access, local database storage, and export tools.</p>
+      </div>
+      <div class="badge-group">
+        <span class="badge">Default UI polling: {{ default_poll_seconds }} s</span>
+        <span class="badge">Default interval: {{ default_interval_seconds }} s</span>
+        <span class="badge">Timezone default: {{ default_timezone_offset }}</span>
+      </div>
+    </header>
+
+    <section class="grid two-col">
+      <div class="card">
+        <h2>Logger control</h2>
+        <form id="start-form" class="stack">
+          <label>
+            Logging period name
+            <input id="session-name" type="text" maxlength="120" placeholder="Example: endurance-test-01" required />
+          </label>
+          <label>
+            Start epoch
+            <input id="start-epoch" type="number" min="0" step="1" required />
+          </label>
+          <div class="hint">Displayed as both epoch and local time below.</div>
+          <div id="epoch-preview" class="preview"></div>
+
+          <label>
+            Interval (seconds)
+            <input id="interval-seconds" type="number" min="1" max="3600" step="1" value="{{ default_interval_seconds }}" required />
+          </label>
+
+          <label>
+            Timezone offset
+            <input id="timezone-offset" type="text" value="{{ default_timezone_offset }}" placeholder="+02:00" required />
+          </label>
+
+          <div class="actions">
+            <button type="button" id="fill-now-btn">Use current epoch</button>
+            <button type="submit">Create logging period</button>
+          </div>
+        </form>
+        <div id="form-message" class="message"></div>
+      </div>
+
+      <div class="card">
+        <h2>Active period</h2>
+        <div id="active-session-box">
+          {% if active_session %}
+            <div class="kv">
+              <div><strong>Name:</strong> {{ active_session.name }}</div>
+              <div><strong>Status:</strong> <span class="status status-{{ active_session.status }}">{{ active_session.status }}</span></div>
+              <div><strong>Start epoch:</strong> {{ active_session.start_epoch }}</div>
+              <div><strong>Start local:</strong> {{ active_session.actual_start_local or active_session.scheduled_start_local }}</div>
+              <div><strong>Interval:</strong> {{ active_session.interval_seconds }} s</div>
+              <div><strong>Timezone:</strong> {{ active_session.timezone_offset }}</div>
+            </div>
+            <button id="stop-btn" data-session-id="{{ active_session.id }}">Stop logging period</button>
+          {% else %}
+            <p>No logging period is active or scheduled.</p>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+
+    <section class="grid two-col">
+      <div class="card">
+        <h2>Current sensors</h2>
+        <div id="current-sensors" class="stack"></div>
+      </div>
+      <div class="card">
+        <h2>Scheduler state</h2>
+        <div id="scheduler-state" class="stack">
+          <div class="hint">Waiting for first refresh…</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Recent trend for selected period</h2>
+      <div class="hint">The chart uses the active period if one exists, otherwise the newest saved period.</div>
+      <div id="chart-session-caption" class="hint"></div>
+      <svg id="trend-chart" viewBox="0 0 800 260" preserveAspectRatio="none" aria-label="Temperature chart"></svg>
+      <div id="chart-legend" class="legend"></div>
+    </section>
+
+    <section class="card">
+      <h2>Latest logged rows</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Epoch</th>
+              <th>Local time</th>
+              <th>Sensor</th>
+              <th>Temperature (°C)</th>
+            </tr>
+          </thead>
+          <tbody id="latest-readings-body">
+            <tr><td colspan="4">No readings yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Saved periods and exports</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Status</th>
+              <th>Start</th>
+              <th>Stop</th>
+              <th>Interval</th>
+              <th>Timezone</th>
+              <th>Exports</th>
+            </tr>
+          </thead>
+          <tbody id="sessions-body">
+            {% if sessions %}
+              {% for session in sessions %}
+                <tr>
+                  <td>{{ session.id }}</td>
+                  <td>{{ session.name }}</td>
+                  <td><span class="status status-{{ session.status }}">{{ session.status }}</span></td>
+                  <td>{{ session.actual_start_local or session.scheduled_start_local }}</td>
+                  <td>{{ session.stop_local or "-" }}</td>
+                  <td>{{ session.interval_seconds }} s</td>
+                  <td>{{ session.timezone_offset }}</td>
+                  <td class="exports">
+                    <a href="/api/sessions/{{ session.id }}/export?format=csv">CSV</a>
+                    <a href="/api/sessions/{{ session.id }}/export?format=txt">TXT</a>
+                    <a href="/api/sessions/{{ session.id }}/export?format=xlsx">XLSX</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            {% else %}
+              <tr><td colspan="8">No periods saved yet.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const DEFAULT_POLL_SECONDS = {{ default_poll_seconds | tojson }};
+    const initialChartSessionId = {{ chart_session_id | tojson }};
+    const chartSeedRows = {{ chart_seed_rows | tojson }};
+
+    const startEpochInput = document.getElementById("start-epoch");
+    const intervalInput = document.getElementById("interval-seconds");
+    const timezoneOffsetInput = document.getElementById("timezone-offset");
+    const epochPreview = document.getElementById("epoch-preview");
+    const formMessage = document.getElementById("form-message");
+    const latestReadingsBody = document.getElementById("latest-readings-body");
+    const currentSensorsBox = document.getElementById("current-sensors");
+    const sessionsBody = document.getElementById("sessions-body");
+    const activeSessionBox = document.getElementById("active-session-box");
+    const schedulerState = document.getElementById("scheduler-state");
+    const trendChart = document.getElementById("trend-chart");
+    const chartLegend = document.getElementById("chart-legend");
+    const chartCaption = document.getElementById("chart-session-caption");
+
+    function nowEpoch() {
+      return Math.floor(Date.now() / 1000);
+    }
+
+    function formatEpochLocal(epoch, offsetText) {
+      if (epoch === null || epoch === undefined) return "-";
+      const match = /^([+-])(\d{1,2})(?::?(\d{2}))?$/.exec(offsetText || "+00:00");
+      if (!match) return `Epoch ${epoch}`;
+      const sign = match[1] === "-" ? -1 : 1;
+      const hours = parseInt(match[2], 10);
+      const minutes = parseInt(match[3] || "0", 10);
+      const offsetMinutes = sign * (hours * 60 + minutes);
+      const date = new Date((epoch + offsetMinutes * 60) * 1000);
+      const month = date.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+      const pad = (value) => String(value).padStart(2, "0");
+      return `${date.getUTCFullYear()}-${month}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+    }
+
+    function updateEpochPreview() {
+      const epoch = Number(startEpochInput.value || 0);
+      const offset = timezoneOffsetInput.value || "+00:00";
+      epochPreview.textContent = `Epoch: ${epoch} | Local time: ${formatEpochLocal(epoch, offset)}`;
+    }
+
+    document.getElementById("fill-now-btn").addEventListener("click", () => {
+      startEpochInput.value = nowEpoch();
+      updateEpochPreview();
+    });
+
+    startEpochInput.addEventListener("input", updateEpochPreview);
+    timezoneOffsetInput.addEventListener("input", updateEpochPreview);
+
+    async function createSession(event) {
+      event.preventDefault();
+      formMessage.textContent = "";
+      const payload = {
+        name: document.getElementById("session-name").value.trim(),
+        start_epoch: Number(startEpochInput.value),
+        interval_seconds: Number(intervalInput.value),
+        timezone_offset: timezoneOffsetInput.value.trim(),
+      };
+      const response = await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        formMessage.textContent = data.detail || "Could not create logging period.";
+        formMessage.className = "message error";
+        return;
+      }
+      formMessage.textContent = `Created logging period "${data.session.name}".`;
+      formMessage.className = "message success";
+      document.getElementById("session-name").value = "";
+      await refreshAll();
+    }
+
+    document.getElementById("start-form").addEventListener("submit", createSession);
+
+    async function stopActiveSession(sessionId) {
+      const response = await fetch(`/api/sessions/${sessionId}/stop`, { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) {
+        alert(data.detail || "Could not stop logging period.");
+        return;
+      }
+      await refreshAll();
+    }
+
+    function renderActiveSession(activeSession) {
+      if (!activeSession) {
+        activeSessionBox.innerHTML = "<p>No logging period is active or scheduled.</p>";
+        return;
+      }
+      activeSessionBox.innerHTML = `
+        <div class="kv">
+          <div><strong>Name:</strong> ${activeSession.name}</div>
+          <div><strong>Status:</strong> <span class="status status-${activeSession.status}">${activeSession.status}</span></div>
+          <div><strong>Scheduled start epoch:</strong> ${activeSession.scheduled_start_epoch}</div>
+          <div><strong>Scheduled local:</strong> ${activeSession.scheduled_start_local || "-"}</div>
+          <div><strong>Actual start epoch:</strong> ${activeSession.actual_start_epoch ?? "-"}</div>
+          <div><strong>Actual start local:</strong> ${activeSession.actual_start_local || "-"}</div>
+          <div><strong>Interval:</strong> ${activeSession.interval_seconds} s</div>
+          <div><strong>Timezone:</strong> ${activeSession.timezone_offset}</div>
+        </div>
+        <button id="stop-btn" data-session-id="${activeSession.id}">Stop logging period</button>
+      `;
+      const stopBtn = document.getElementById("stop-btn");
+      stopBtn.addEventListener("click", () => stopActiveSession(stopBtn.dataset.sessionId));
+    }
+
+    function renderSessions(items) {
+      if (!items.length) {
+        sessionsBody.innerHTML = '<tr><td colspan="8">No periods saved yet.</td></tr>';
+        return;
+      }
+      sessionsBody.innerHTML = items.map((session) => `
+        <tr>
+          <td>${session.id}</td>
+          <td>${session.name}</td>
+          <td><span class="status status-${session.status}">${session.status}</span></td>
+          <td>${session.actual_start_local || session.scheduled_start_local || "-"}</td>
+          <td>${session.stop_local || "-"}</td>
+          <td>${session.interval_seconds} s</td>
+          <td>${session.timezone_offset}</td>
+          <td class="exports">
+            <a href="/api/sessions/${session.id}/export?format=csv">CSV</a>
+            <a href="/api/sessions/${session.id}/export?format=txt">TXT</a>
+            <a href="/api/sessions/${session.id}/export?format=xlsx">XLSX</a>
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    function renderCurrentSensors(status) {
+      const sensors = status.current_sensors || [];
+      if (!sensors.length) {
+        currentSensorsBox.innerHTML = `<div class="hint">${status.sensor_error || "No sensors detected."}</div>`;
+        return;
+      }
+      currentSensorsBox.innerHTML = sensors.map((sensor) => `
+        <div class="sensor-row">
+          <div>
+            <strong>${sensor.sensor_name}</strong>
+            <div class="hint">${sensor.sensor_id}</div>
+          </div>
+          <div class="temp">${Number(sensor.temperature_c).toFixed(3)} °C</div>
+        </div>
+      `).join("");
+    }
+
+    function renderSchedulerState(status) {
+      schedulerState.innerHTML = `
+        <div><strong>Host UTC epoch:</strong> ${status.host_time_epoch}</div>
+        <div><strong>Host UTC time:</strong> ${status.host_time_utc || "-"}</div>
+        <div><strong>Configured UI poll:</strong> ${status.configured_poll_seconds} s</div>
+        <div><strong>Detected sensors:</strong> ${status.sensor_count}</div>
+        <div><strong>Scheduler error:</strong> ${status.scheduler_error || "none"}</div>
+      `;
+    }
+
+    function renderLatestReadings(items) {
+      if (!items || !items.length) {
+        latestReadingsBody.innerHTML = '<tr><td colspan="4">No readings yet.</td></tr>';
+        return;
+      }
+      latestReadingsBody.innerHTML = items.slice(-20).reverse().map((row) => `
+        <tr>
+          <td>${row.sample_epoch}</td>
+          <td>${row.sample_time_local || "-"}</td>
+          <td>${row.sensor_name} <span class="hint">(${row.sensor_id})</span></td>
+          <td>${Number(row.temperature_c).toFixed(4)}</td>
+        </tr>
+      `).join("");
+    }
+
+    function renderTrendChart(session, rows) {
+      chartLegend.innerHTML = "";
+      trendChart.innerHTML = "";
+      if (!session || !rows || !rows.length) {
+        chartCaption.textContent = "No readings to plot yet.";
+        return;
+      }
+      chartCaption.textContent = `Showing the latest ${rows.length} rows from period "${session.name}" (${session.timezone_offset}).`;
+
+      const width = 800;
+      const height = 260;
+      const padding = 28;
+      const grouped = {};
+      rows.forEach((row) => {
+        if (!grouped[row.sensor_id]) grouped[row.sensor_id] = [];
+        grouped[row.sensor_id].push(row);
+      });
+
+      const temps = rows.map((row) => Number(row.temperature_c));
+      const epochs = rows.map((row) => Number(row.sample_epoch));
+      const minTemp = Math.min(...temps);
+      const maxTemp = Math.max(...temps);
+      const minEpoch = Math.min(...epochs);
+      const maxEpoch = Math.max(...epochs);
+      const tempSpan = Math.max(maxTemp - minTemp, 0.5);
+      const epochSpan = Math.max(maxEpoch - minEpoch, 1);
+
+      trendChart.innerHTML += `
+        <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" class="axis" />
+        <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" class="axis" />
+        <text x="${padding}" y="${padding - 6}" class="axis-label">${maxTemp.toFixed(2)} °C</text>
+        <text x="${padding}" y="${height - 8}" class="axis-label">${minTemp.toFixed(2)} °C</text>
+      `;
+
+      const palette = ["line-a", "line-b", "line-c", "line-d"];
+
+      Object.entries(grouped).forEach(([sensorId, items], index) => {
+        const cssClass = palette[index % palette.length];
+        const points = items.map((row) => {
+          const x = padding + ((row.sample_epoch - minEpoch) / epochSpan) * (width - padding * 2);
+          const y = (height - padding) - ((row.temperature_c - minTemp) / tempSpan) * (height - padding * 2);
+          return `${x},${y}`;
+        }).join(" ");
+        trendChart.innerHTML += `<polyline points="${points}" class="series ${cssClass}" fill="none" />`;
+
+        const label = items[items.length - 1].sensor_name;
+        const temp = Number(items[items.length - 1].temperature_c).toFixed(3);
+        chartLegend.innerHTML += `<span class="legend-item"><span class="legend-swatch ${cssClass}"></span>${label}: ${temp} °C</span>`;
+      });
+    }
+
+    async function refreshReadings(sessionId) {
+      if (!sessionId) {
+        renderLatestReadings([]);
+        renderTrendChart(null, []);
+        return;
+      }
+      const response = await fetch(`/api/sessions/${sessionId}/readings?limit=200`);
+      if (!response.ok) return;
+      const data = await response.json();
+      renderLatestReadings(data.items);
+      renderTrendChart(data.session, data.items);
+    }
+
+    async function refreshAll() {
+      const [statusResponse, sessionsResponse] = await Promise.all([
+        fetch("/api/status"),
+        fetch("/api/sessions?limit=20"),
+      ]);
+
+      if (statusResponse.ok) {
+        const status = await statusResponse.json();
+        renderActiveSession(status.active_session);
+        renderCurrentSensors(status);
+        renderSchedulerState(status);
+      }
+
+      let sessionItems = [];
+      if (sessionsResponse.ok) {
+        const sessionsData = await sessionsResponse.json();
+        sessionItems = sessionsData.items || [];
+        renderSessions(sessionItems);
+      }
+
+      const activeOrLatest = sessionItems.find((item) => item.status === "running" || item.status === "scheduled") || sessionItems[0];
+      await refreshReadings(activeOrLatest ? activeOrLatest.id : null);
+    }
+
+    updateEpochPreview();
+    if (!startEpochInput.value) {
+      startEpochInput.value = nowEpoch();
+      updateEpochPreview();
+    }
+    renderTrendChart(
+      initialChartSessionId ? { id: initialChartSessionId, name: "seed", timezone_offset: "{{ default_timezone_offset }}" } : null,
+      chartSeedRows
+    );
+    refreshAll();
+    setInterval(refreshAll, DEFAULT_POLL_SECONDS * 1000);
+  </script>
+</body>
+</html>

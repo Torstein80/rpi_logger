@@ -1,0 +1,23 @@
+services:
+  haga-rpi-temp-logger:
+    image: ghcr.io/YOUR_GITHUB_USER_OR_ORG/haga-rpi-temp-logger:latest
+    container_name: haga-rpi-temp-logger
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8080"
+      DEFAULT_POLL_SECONDS: "10"
+      DEFAULT_INTERVAL_SECONDS: "10"
+      DEFAULT_TIMEZONE_OFFSET: "+02:00"
+      DB_PATH: "/data/logger.db"
+      EXPORT_DIR: "/data/exports"
+      W1_BASE_PATH: "/sys/bus/w1/devices"
+      SENSOR_LABELS: "28-xxxxxxxxxxxx:Probe A,28-yyyyyyyyyyyy:Probe B"
+      HTTPS_CERTFILE: "/certs/cert.pem"
+      HTTPS_KEYFILE: "/certs/key.pem"
+    volumes:
+      - /opt/haga-logger/data:/data
+      - /opt/haga-logger/certs:/certs:ro
+      - /sys/bus/w1/devices:/sys/bus/w1/devices:ro

@@ -1,0 +1,36 @@
+I need help with a project. I have a raspberry pi3. I want to build a temperature logger with two one-wire sensors connected to the RPI. I picture the project as this:
+Hardware: RPI3 with connected one wire sensors
+OS: A lightweight OS capable of running docker with portainer
+I prefer github to generate docker images
+The docker image must be able to reach RPI hardware pins (privileged?)
+
+Main goals:
+The goal with the project is to create a logging system that is expected to run for 1000 hours +.
+The RPI logger must be able to run standalone logging to local harddrive.
+The RPI logger must be able to expose the logged data to another pc via LAN.
+
+Requirements:
+I need a web interface that the RPI is serving prefereably with sertificates for https
+Required functions:
+-Configure start time based on Unix epoc timestamp (1 january 1970). Display both epoc and time as Yr-Mon-Day Hr:Min:Sec https://www.epochconverter.com/
+-It must be possible to set the log intervals typicaly in the range a few seconds to an hour.
+-The logged data must be saved to a local disk, prefereably in a database.
+-It must be easy to export the log to both csv, txt and excel format
+-It must be possible to connect another PC via local net that can access the logs both as history and in real time via http.
+-hostname can be something like hagasolutionsRPIlogger
+-Temp log should be visible in the web interface
+-A new logging periode must be given a name. the name with time stamps (start and stop) should be added to the filename when exported
+-Add funtionality for timezones, ie UTC +2h
+-Fixed IP, typical 10.87.0.5
+
+Development and software:
+I plan on using VScode for the development
+Make the required files that can be pushed to github (i will make a repo), ensure docker image build methode is included
+A readme that give step by step instructions for:
+-OS install on the RPI
+-Required software on the OS, i.e docker, portainer and more
+-creation process of the docker image
+-portainer config files
+-docker env config if required
+-database handling
+-http requests for external PC. (Plan is to also log to TestStand)

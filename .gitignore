@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+.venv/
+venv/
+.env
+data/
+exports/
+certs/*.pem
+certs/*.key
+certs/*.crt
+dist/
+build/
+.DS_Store
