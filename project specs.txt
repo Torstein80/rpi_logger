@@ -33,4 +33,4 @@ A readme that give step by step instructions for:
 -portainer config files
 -docker env config if required
 -database handling
--http requests for external PC. (Plan is to also log to TestStand)
+-http requests for external PC. (Plan is to also log to TestStand).
