@@ -507,10 +507,10 @@
     async function createSession(event) {
       event.preventDefault();
       formMessage.textContent = "";
-      const epochValue = startEpochInput.value === "" ? nowEpoch() : Number(startEpochInput.value);
+      const rawEpoch = startEpochInput.value.trim();
       const payload = {
         name: document.getElementById("session-name").value.trim(),
-        start_epoch: epochValue,
+        start_epoch: rawEpoch === "" ? null : Number(rawEpoch),
         interval_seconds: Number(intervalInput.value),
         timezone_offset: timezoneOffsetInput.value.trim(),
       };
@@ -1092,7 +1092,7 @@
     });
 
     if (!startEpochInput.value) {
-      startEpochInput.value = nowEpoch();
+      startEpochInput.placeholder = String(nowEpoch());
     }
     if (timezoneLocationSelect.value !== DEFAULT_TIMEZONE_LOCATION && timezoneLocationSelect.value !== 'manual') {
       timezoneLocationSelect.value = DEFAULT_TIMEZONE_LOCATION;
