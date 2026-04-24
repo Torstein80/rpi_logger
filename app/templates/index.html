@@ -782,7 +782,7 @@
           <td>${row.sample_time_local || '-'}</td>
           <td>${safeText(row.slot_no)}</td>
           <td>${row.sensor_name} <span class="hint">(${row.sensor_id})</span></td>
-          <td>${Number(row.temperature_c).toFixed(4)}</td>
+          <td>${row.temperature_c === null ? '-' : Number(row.temperature_c).toFixed(4)}</td>
           <td>${statusBadge(row.is_substituted ? `${row.status} / substituted` : row.status)}</td>
         </tr>
       `).join('');
@@ -794,14 +794,24 @@
 
     function showChartTooltip(event, row, session) {
       if (!session) return;
-      chartTooltip.innerHTML = `
-        <div><strong>${row.sensor_name}</strong> (slot ${safeText(row.slot_no)})</div>
-        <div>Temp: ${Number(row.temperature_c).toFixed(3)} °C</div>
-        <div>Status: ${row.status}${row.is_substituted ? ' / substituted' : ''}</div>
-        <div>Epoch: ${row.sample_epoch}</div>
-        <div>Local: ${row.sample_time_local || formatEpochLocal(row.sample_epoch, session.timezone_offset)}</div>
-        ${row.error_text ? `<div>Error: ${row.error_text}</div>` : ''}
-      `;
+      if (row.status === 'offline_gap') {
+        chartTooltip.innerHTML = `
+          <div><strong>${row.sensor_name}</strong> (slot ${safeText(row.slot_no)})</div>
+          <div>Status: offline gap</div>
+          <div>Gap marker epoch: ${row.sample_epoch}</div>
+          <div>Local: ${row.sample_time_local || formatEpochLocal(row.sample_epoch, session.timezone_offset)}</div>
+          ${row.error_text ? `<div>Info: ${row.error_text}</div>` : ''}
+        `;
+      } else {
+        chartTooltip.innerHTML = `
+          <div><strong>${row.sensor_name}</strong> (slot ${safeText(row.slot_no)})</div>
+          <div>Temp: ${Number(row.temperature_c).toFixed(3)} °C</div>
+          <div>Status: ${row.status}${row.is_substituted ? ' / substituted' : ''}</div>
+          <div>Epoch: ${row.sample_epoch}</div>
+          <div>Local: ${row.sample_time_local || formatEpochLocal(row.sample_epoch, session.timezone_offset)}</div>
+          ${row.error_text ? `<div>Error: ${row.error_text}</div>` : ''}
+        `;
+      }
       chartTooltip.classList.remove('hidden');
       const wrapRect = trendChart.getBoundingClientRect();
       const x = event.clientX - wrapRect.left + 12;
@@ -908,8 +918,13 @@
         grouped[key].push({ ...row, sample_time_local: row.sample_time_local || formatEpochLocal(row.sample_epoch, session.timezone_offset) });
       });
 
-      const temps = rows.map((row) => Number(row.temperature_c));
+      const plotRows = rows.filter((row) => row.temperature_c !== null && row.status !== 'offline_gap');
+      const temps = plotRows.map((row) => Number(row.temperature_c));
       const epochs = rows.map((row) => Number(row.sample_epoch));
+      if (!plotRows.length || !epochs.length) {
+        chartCaption.textContent = 'No readings to plot yet.';
+        return;
+      }
       const minTempRaw = Math.min(...temps);
       const maxTempRaw = Math.max(...temps);
       const minTemp = minTempRaw - 0.2;
@@ -931,31 +946,66 @@
 
       Object.entries(grouped).forEach(([key, items], index) => {
         const cssClass = palette[index % palette.length];
-        const pointObjects = items.map((row) => {
+        const lineSegments = [];
+        let currentSegment = [];
+
+        items.forEach((row) => {
           const x = paddingLeft + ((row.sample_epoch - minEpoch) / epochSpan) * plotWidth;
-          const y = (height - paddingBottom) - ((row.temperature_c - minTemp) / tempSpan) * plotHeight;
           row._chartX = x;
+          if (row.temperature_c === null || row.status === 'offline_gap') {
+            row._chartY = height - paddingBottom - 8;
+            if (currentSegment.length) {
+              lineSegments.push(currentSegment);
+              currentSegment = [];
+            }
+            trendChart.innerHTML += `<line x1="${x}" y1="${paddingTop}" x2="${x}" y2="${height - paddingBottom}" class="gap-marker" />`;
+            trendChart.innerHTML += `
+              <rect
+                class="chart-hit-area gap-hit-area"
+                x="${x - 6}"
+                y="${paddingTop}"
+                width="12"
+                height="${plotHeight}"
+                data-key="${key}"
+                data-epoch="${row.sample_epoch}"
+              ></rect>
+            `;
+            return;
+          }
+          const y = (height - paddingBottom) - ((row.temperature_c - minTemp) / tempSpan) * plotHeight;
           row._chartY = y;
-          return { x, y };
+          currentSegment.push({ x, y });
+        });
+        if (currentSegment.length) {
+          lineSegments.push(currentSegment);
+        }
+
+        if (fillOpacity > 0) {
+          lineSegments.filter((segment) => segment.length >= 2).forEach((segment) => {
+            const fillPath = buildFillPath(segment, height - paddingBottom, options.curve);
+            if (options.curve === 'smooth') {
+              trendChart.innerHTML += `<path d="${fillPath}" class="series-fill ${cssClass}" style="opacity:${fillOpacity}" />`;
+            } else {
+              trendChart.innerHTML += `<polygon points="${fillPath}" class="series-fill ${cssClass}" style="opacity:${fillOpacity}" />`;
+            }
+          });
+        }
+
+        lineSegments.forEach((segment) => {
+          if (!segment.length) return;
+          if (options.curve === 'smooth') {
+            const linePath = buildSmoothLinePath(segment);
+            trendChart.innerHTML += `<path d="${linePath}" class="series ${cssClass}" fill="none" style="stroke-width:${lineWidth}px" />`;
+          } else {
+            const polylinePoints = buildStraightPolyline(segment);
+            trendChart.innerHTML += `<polyline points="${polylinePoints}" class="series ${cssClass}" fill="none" style="stroke-width:${lineWidth}px" />`;
+          }
         });
 
-        if (fillOpacity > 0 && pointObjects.length >= 2) {
-          const fillPath = buildFillPath(pointObjects, height - paddingBottom, options.curve);
-          if (options.curve === 'smooth') {
-            trendChart.innerHTML += `<path d="${fillPath}" class="series-fill ${cssClass}" style="opacity:${fillOpacity}" />`;
-          } else {
-            trendChart.innerHTML += `<polygon points="${fillPath}" class="series-fill ${cssClass}" style="opacity:${fillOpacity}" />`;
-          }
-        }
-
-        if (options.curve === 'smooth') {
-          const linePath = buildSmoothLinePath(pointObjects);
-          trendChart.innerHTML += `<path d="${linePath}" class="series ${cssClass}" fill="none" style="stroke-width:${lineWidth}px" />`;
-        } else {
-          const polylinePoints = buildStraightPolyline(pointObjects);
-          trendChart.innerHTML += `<polyline points="${polylinePoints}" class="series ${cssClass}" fill="none" style="stroke-width:${lineWidth}px" />`;
-        }
         items.forEach((row) => {
+          if (row.temperature_c === null || row.status === 'offline_gap') {
+            return;
+          }
           trendChart.innerHTML += `
             <circle
               class="chart-hit-area"
@@ -978,9 +1028,10 @@
           }
         });
 
-        const label = items[items.length - 1].sensor_name;
-        const temp = Number(items[items.length - 1].temperature_c).toFixed(3);
-        chartLegend.innerHTML += `<span class="legend-item"><span class="legend-swatch ${cssClass}"></span>${label}: ${temp} °C</span>`;
+        const latestDisplayRow = [...items].reverse().find((row) => row.temperature_c !== null && row.status !== 'offline_gap') || items[items.length - 1];
+        const label = latestDisplayRow.sensor_name;
+        const temp = latestDisplayRow.temperature_c === null ? 'gap' : `${Number(latestDisplayRow.temperature_c).toFixed(3)} °C`;
+        chartLegend.innerHTML += `<span class="legend-item"><span class="legend-swatch ${cssClass}"></span>${label}: ${temp}</span>`;
       });
 
       const pointElements = Array.from(trendChart.querySelectorAll('.chart-hit-area'));

@@ -56,6 +56,8 @@ class LoggerState:
 
 LOGGER_STATE = LoggerState()
 LOGGER_LOCK = threading.Lock()
+PROCESS_START_EPOCH = int(time.time())
+RECOVERY_SAMPLE_SESSION_IDS: set[int] = set()
 
 
 def now_epoch() -> int:
@@ -216,21 +218,84 @@ def fetch_readings(conn: sqlite3.Connection, session_id: int, limit: int) -> lis
     return list(reversed(rows))
 
 
+def _reading_row_to_dict(row: sqlite3.Row, timezone_offset_minutes: int) -> dict[str, Any]:
+    return {
+        "sample_epoch": row["sample_epoch"],
+        "sample_time_local": format_epoch(row["sample_epoch"], timezone_offset_minutes),
+        "slot_no": row["slot_no"],
+        "sensor_id": row["sensor_id"],
+        "sensor_name": row["sensor_name"],
+        "temperature_c": round(row["temperature_c"], 4) if row["temperature_c"] is not None else None,
+        "status": row["status"],
+        "is_substituted": bool(row["is_substituted"]),
+        "error_text": row["error_text"],
+    }
+
+
+def augment_reading_items_with_gaps(
+    items: list[dict[str, Any]],
+    interval_seconds: int,
+    timezone_offset_minutes: int,
+) -> list[dict[str, Any]]:
+    if not items or interval_seconds <= 0:
+        return items
+
+    grouped: dict[int | str, list[dict[str, Any]]] = {}
+    for item in items:
+        key = item.get("slot_no") or item.get("sensor_id") or "unknown"
+        grouped.setdefault(key, []).append(dict(item))
+
+    gap_threshold = max(int(interval_seconds * 1.5), interval_seconds + 1)
+    merged: list[dict[str, Any]] = []
+    for group_items in grouped.values():
+        group_items.sort(key=lambda row: (int(row["sample_epoch"]), int(row.get("slot_no") or 0)))
+        previous: dict[str, Any] | None = None
+        for current in group_items:
+            if previous is not None:
+                delta = int(current["sample_epoch"]) - int(previous["sample_epoch"])
+                if delta > gap_threshold:
+                    gap_epoch = int(previous["sample_epoch"]) + interval_seconds
+                    offline_seconds = max(int(current["sample_epoch"]) - gap_epoch, 0)
+                    resume_local = format_epoch(int(current["sample_epoch"]), timezone_offset_minutes)
+                    merged.append(
+                        {
+                            "sample_epoch": gap_epoch,
+                            "sample_time_local": format_epoch(gap_epoch, timezone_offset_minutes),
+                            "slot_no": current.get("slot_no") or previous.get("slot_no"),
+                            "sensor_id": current.get("sensor_id") or previous.get("sensor_id"),
+                            "sensor_name": current.get("sensor_name") or previous.get("sensor_name"),
+                            "temperature_c": None,
+                            "status": "offline_gap",
+                            "is_substituted": True,
+                            "error_text": f"Logger offline or unavailable for {offline_seconds} s. Logging resumed at {resume_local}.",
+                            "gap_resume_epoch": int(current["sample_epoch"]),
+                            "gap_duration_seconds": offline_seconds,
+                        }
+                    )
+            merged.append(current)
+            previous = current
+
+    merged.sort(
+        key=lambda row: (
+            int(row["sample_epoch"]),
+            int(row.get("slot_no") or 0),
+            0 if row.get("status") == "offline_gap" else 1,
+        )
+    )
+    return merged
+
+
+def fetch_reading_items(conn: sqlite3.Connection, session_row: sqlite3.Row, limit: int) -> list[dict[str, Any]]:
+    rows = fetch_readings(conn, session_row["id"], limit)
+    items = [_reading_row_to_dict(row, session_row["timezone_offset_minutes"]) for row in rows]
+    return augment_reading_items_with_gaps(items, session_row["interval_seconds"], session_row["timezone_offset_minutes"])
+
+
 def fetch_chart_seed_rows(conn: sqlite3.Connection, session_id: int, limit: int = 200) -> list[dict[str, Any]]:
-    rows = fetch_readings(conn, session_id, limit)
-    return [
-        {
-            "sample_epoch": row["sample_epoch"],
-            "slot_no": row["slot_no"],
-            "sensor_id": row["sensor_id"],
-            "sensor_name": row["sensor_name"],
-            "temperature_c": row["temperature_c"],
-            "status": row["status"],
-            "is_substituted": bool(row["is_substituted"]),
-            "error_text": row["error_text"],
-        }
-        for row in rows
-    ]
+    session_row = fetch_session(conn, session_id)
+    if session_row is None:
+        return []
+    return fetch_reading_items(conn, session_row, limit)
 
 
 def validate_sensor_slots_payload(payload: SensorSlotsUpdatePayload) -> None:
@@ -501,9 +566,18 @@ def scheduler_loop() -> None:
 
                         if target["status"] == SESSION_STATUS_RUNNING:
                             LOGGER_STATE.active_session_id = target["id"]
-                            due_epoch = target["next_sample_epoch"] or target["actual_start_epoch"] or current_epoch
-                            if current_epoch >= due_epoch:
+                            recovered_session = (
+                                target["created_epoch"] < PROCESS_START_EPOCH
+                                and target["id"] not in RECOVERY_SAMPLE_SESSION_IDS
+                            )
+                            if recovered_session:
                                 sample_session(conn, target, current_epoch)
+                                RECOVERY_SAMPLE_SESSION_IDS.add(target["id"])
+                                target = fetch_session(conn, target["id"]) or target
+                            else:
+                                due_epoch = target["next_sample_epoch"] or target["actual_start_epoch"] or current_epoch
+                                if current_epoch >= due_epoch:
+                                    sample_session(conn, target, current_epoch)
                             LOGGER_STATE.last_error = None
                     LOGGER_STATE.last_cycle_epoch = now_epoch()
         except Exception as exc:  # pragma: no cover - background loop
@@ -681,23 +755,10 @@ def session_readings(session_id: int, limit: int = 500):
         session_row = fetch_session(conn, session_id)
         if not session_row:
             raise HTTPException(status_code=404, detail="Session not found.")
-        rows = fetch_readings(conn, session_id, max(1, min(limit, 5000)))
+        items = fetch_reading_items(conn, session_row, max(1, min(limit, 5000)))
         return {
             "session": serialize_session(session_row),
-            "items": [
-                {
-                    "sample_epoch": row["sample_epoch"],
-                    "sample_time_local": format_epoch(row["sample_epoch"], session_row["timezone_offset_minutes"]),
-                    "slot_no": row["slot_no"],
-                    "sensor_id": row["sensor_id"],
-                    "sensor_name": row["sensor_name"],
-                    "temperature_c": round(row["temperature_c"], 4),
-                    "status": row["status"],
-                    "is_substituted": bool(row["is_substituted"]),
-                    "error_text": row["error_text"],
-                }
-                for row in rows
-            ],
+            "items": items,
         }
 
 

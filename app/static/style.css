@@ -397,6 +397,17 @@ a:hover { text-decoration: underline; }
   pointer-events: none;
 }
 
+.gap-marker {
+  stroke: rgba(248, 250, 252, 0.35);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+  pointer-events: none;
+}
+
+.gap-hit-area {
+  fill: transparent;
+  stroke: transparent;
+}
 
 #trend-chart.fill-off .series-fill {
   display: none !important;

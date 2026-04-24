@@ -2,7 +2,7 @@ services:
   haga-rpi-temp-logger:
     build:
       context: .
-    image: ghcr.io/torstein80/haga-rpi-temp-logger:latest
+    image: ghcr.io/YOUR_GITHUB_USER_OR_ORG/haga-rpi-temp-logger:latest
     container_name: haga-rpi-temp-logger
     restart: unless-stopped
     ports:

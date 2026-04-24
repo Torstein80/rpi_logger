@@ -10,6 +10,56 @@ from .config import EXPORT_DIR
 from .utils import ensure_dir, format_epoch, offset_minutes_to_text, safe_filename
 
 
+def augment_rows_with_gap_markers(rows: list[dict], interval_seconds: int, timezone_offset_minutes: int) -> list[dict]:
+    if not rows or interval_seconds <= 0:
+        return rows
+
+    grouped: dict[int | str, list[dict]] = {}
+    for row in rows:
+        key = row.get("slot_no") or row.get("sensor_id") or "unknown"
+        grouped.setdefault(key, []).append(dict(row))
+
+    gap_threshold = max(int(interval_seconds * 1.5), interval_seconds + 1)
+    merged: list[dict] = []
+    for group_rows in grouped.values():
+        group_rows.sort(key=lambda item: (int(item["sample_epoch"]), int(item.get("slot_no") or 0)))
+        previous: dict | None = None
+        for current in group_rows:
+            if previous is not None:
+                delta = int(current["sample_epoch"]) - int(previous["sample_epoch"])
+                if delta > gap_threshold:
+                    gap_epoch = int(previous["sample_epoch"]) + interval_seconds
+                    offline_seconds = max(int(current["sample_epoch"]) - gap_epoch, 0)
+                    resume_local = format_epoch(int(current["sample_epoch"]), timezone_offset_minutes)
+                    merged.append(
+                        {
+                            "session_name": current.get("session_name", ""),
+                            "session_id": current.get("session_id"),
+                            "sample_epoch": gap_epoch,
+                            "sample_time_local": format_epoch(gap_epoch, timezone_offset_minutes),
+                            "timezone_offset": offset_minutes_to_text(timezone_offset_minutes),
+                            "slot_no": current.get("slot_no") or previous.get("slot_no"),
+                            "sensor_id": current.get("sensor_id") or previous.get("sensor_id"),
+                            "sensor_name": current.get("sensor_name") or previous.get("sensor_name"),
+                            "temperature_c": "",
+                            "status": "offline_gap",
+                            "is_substituted": 1,
+                            "error_text": f"Logger offline or unavailable for {offline_seconds} s. Logging resumed at {resume_local}.",
+                        }
+                    )
+            merged.append(current)
+            previous = current
+
+    merged.sort(
+        key=lambda row: (
+            int(row["sample_epoch"]),
+            int(row.get("slot_no") or 0),
+            0 if row.get("status") == "offline_gap" else 1,
+        )
+    )
+    return merged
+
+
 def build_export(conn: sqlite3.Connection, session_row: sqlite3.Row, export_format: str) -> Path:
     ensure_dir(EXPORT_DIR)
     file_name = safe_filename(
@@ -48,6 +98,12 @@ def build_export(conn: sqlite3.Connection, session_row: sqlite3.Row, export_form
                 "error_text": item["error_text"] or "",
             }
         )
+
+    rows = augment_rows_with_gap_markers(
+        rows,
+        session_row["interval_seconds"],
+        session_row["timezone_offset_minutes"],
+    )
 
     if export_format == "csv":
         _write_csv(output_path, rows)

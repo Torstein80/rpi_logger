@@ -15,3 +15,4 @@ certs/*.crt
 dist/
 build/
 .DS_Store
+passwd and login.txt
