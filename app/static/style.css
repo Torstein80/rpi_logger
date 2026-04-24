@@ -422,6 +422,21 @@ a:hover { text-decoration: underline; }
 .line-c { stroke: #f97316; fill: #f97316; }
 .line-d { stroke: #a78bfa; fill: #a78bfa; }
 
+
+.series.line-a, .series.line-b, .series.line-c, .series.line-d {
+  fill: none !important;
+}
+
+.series-fill.line-a { fill: #38bdf8; }
+.series-fill.line-b { fill: #22c55e; }
+.series-fill.line-c { fill: #f97316; }
+.series-fill.line-d { fill: #a78bfa; }
+
+.chart-point.line-a, .legend-swatch.line-a { fill: #38bdf8; stroke: #38bdf8; }
+.chart-point.line-b, .legend-swatch.line-b { fill: #22c55e; stroke: #22c55e; }
+.chart-point.line-c, .legend-swatch.line-c { fill: #f97316; stroke: #f97316; }
+.chart-point.line-d, .legend-swatch.line-d { fill: #a78bfa; stroke: #a78bfa; }
+
 .legend {
   display: flex;
   flex-wrap: wrap;
