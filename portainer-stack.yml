@@ -1,6 +1,6 @@
 services:
   haga-rpi-temp-logger:
-    image: ghcr.io/YOUR_GITHUB_USER_OR_ORG/haga-rpi-temp-logger:latest
+    image: ghcr.io/torstein80/haga-rpi-temp-logger:latest
     container_name: haga-rpi-temp-logger
     restart: unless-stopped
     ports:
@@ -15,8 +15,8 @@ services:
       EXPORT_DIR: "/data/exports"
       W1_BASE_PATH: "/sys/bus/w1/devices"
       SENSOR_LABELS: "28-xxxxxxxxxxxx:Probe A,28-yyyyyyyyyyyy:Probe B"
-      HTTPS_CERTFILE: "/certs/cert.pem"
-      HTTPS_KEYFILE: "/certs/key.pem"
+      HTTPS_CERTFILE: ""
+      HTTPS_KEYFILE: ""
       NETWORK_MANAGER_ENABLED: "true"
       NETWORK_AP_INTERFACE: "wlan0"
       NETWORK_AP_CONNECTION_NAME: "haga-fallback-ap"
