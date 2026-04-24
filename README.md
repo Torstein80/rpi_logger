@@ -265,6 +265,7 @@ This adds:
 - an easy-to-remember URL such as `http://10.77.0.1:8080`
 - a fixed hostname such as `hagasolutions-rpi-logger.local`
 - an `eth0` connection profile that can run either **DHCP** or **manual/static** addressing
+- a **Wired network settings** card in the logger web UI, so you can change `eth0` between DHCP and a fixed IPv4 address while connected through the rescue AP
 
 Quick start:
 
@@ -283,7 +284,7 @@ AP_ADDRESS_CIDR=10.77.0.1/24
 WIRED_MODE=auto
 ```
 
-If you really need a fixed wired address on a known network, change the wired settings to manual and set `WIRED_IP_CIDR`, `WIRED_GATEWAY`, and `WIRED_DNS`.
+If you really need a fixed wired address on a known network, you can either set `WIRED_MODE=manual` in the env file before running the setup script, or open the logger web UI over the rescue AP and use the **Wired network settings** card to switch `eth0` to a fixed IP.
 
 ---
 

@@ -22,6 +22,7 @@ source "$ENV_FILE"
 : "${WIRED_INTERFACE:=eth0}"
 : "${WIRED_IP_CIDR:=10.87.0.5/24}"
 : "${PI_HOSTNAME:=hagasolutions-rpi-logger}"
+: "${DISABLE_EXISTING_WIFI_CLIENT:=true}"
 
 AP_CONNECTION_NAME="haga-fallback-ap"
 
@@ -37,7 +38,13 @@ systemctl start NetworkManager avahi-daemon
 
 hostnamectl set-hostname "$PI_HOSTNAME"
 
-# Remove any previous AP profile so reruns are idempotent.
+if [[ "$DISABLE_EXISTING_WIFI_CLIENT" == "true" ]]; then
+  active_wifi_client="$(nmcli -t -f NAME,DEVICE,TYPE connection show --active | awk -F: -v ifname="$AP_INTERFACE" '$2 == ifname && $3 == "wifi" {print $1; exit}')"
+  if [[ -n "$active_wifi_client" && "$active_wifi_client" != "$AP_CONNECTION_NAME" ]]; then
+    nmcli connection down "$active_wifi_client" || true
+  fi
+fi
+
 if nmcli -t -f NAME connection show | grep -Fxq "$AP_CONNECTION_NAME"; then
   nmcli connection delete "$AP_CONNECTION_NAME"
 fi
@@ -64,15 +71,18 @@ if [[ "$WIRED_MODE" == "manual" ]]; then
   if [[ -n "${WIRED_GATEWAY:-}" ]]; then
     nmcli connection modify "$WIRED_CONNECTION_NAME" ipv4.gateway "$WIRED_GATEWAY"
   else
-    nmcli connection modify "$WIRED_CONNECTION_NAME" -ipv4.gateway
+    nmcli connection modify "$WIRED_CONNECTION_NAME" -ipv4.gateway || true
   fi
   if [[ -n "${WIRED_DNS:-}" ]]; then
     nmcli connection modify "$WIRED_CONNECTION_NAME" ipv4.dns "$WIRED_DNS"
   else
-    nmcli connection modify "$WIRED_CONNECTION_NAME" -ipv4.dns
+    nmcli connection modify "$WIRED_CONNECTION_NAME" -ipv4.dns || true
   fi
 else
-  nmcli connection modify "$WIRED_CONNECTION_NAME" ipv4.method auto -ipv4.addresses -ipv4.gateway -ipv4.dns
+  nmcli connection modify "$WIRED_CONNECTION_NAME" ipv4.method auto
+  nmcli connection modify "$WIRED_CONNECTION_NAME" -ipv4.addresses || true
+  nmcli connection modify "$WIRED_CONNECTION_NAME" -ipv4.gateway || true
+  nmcli connection modify "$WIRED_CONNECTION_NAME" -ipv4.dns || true
 fi
 nmcli connection modify "$WIRED_CONNECTION_NAME" ipv6.method ignore connection.autoconnect yes connection.autoconnect-priority 100
 

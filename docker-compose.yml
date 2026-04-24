@@ -19,7 +19,14 @@ services:
       SENSOR_LABELS: ""
       HTTPS_CERTFILE: ""
       HTTPS_KEYFILE: ""
+      NETWORK_MANAGER_ENABLED: "true"
+      NETWORK_AP_INTERFACE: "wlan0"
+      NETWORK_AP_CONNECTION_NAME: "haga-fallback-ap"
+      NETWORK_WIRED_INTERFACE: "eth0"
+      NETWORK_WIRED_CONNECTION_NAME: "haga-eth0"
     volumes:
       - ./data:/data
       - ./certs:/certs:ro
       - /sys/bus/w1/devices:/sys/bus/w1/devices:ro
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - /etc/machine-id:/etc/machine-id:ro

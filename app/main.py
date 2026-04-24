@@ -33,6 +33,7 @@ from .config import (
 from .database import db_session, init_db
 from .exporters import build_export
 from .models import SESSION_STATUS_COMPLETED, SESSION_STATUS_RUNNING, SESSION_STATUS_SCHEDULED
+from .networking import NetworkConfigError, NetworkUnavailableError, apply_wired_network, network_manager_status
 from .sensors import list_sensors, read_all_sensors, read_configured_sensor
 from .utils import (
     DEFAULT_TIMEZONE_LOCATION,
@@ -89,6 +90,13 @@ class SensorSlotPayload(BaseModel):
 
 class SensorSlotsUpdatePayload(BaseModel):
     slots: list[SensorSlotPayload]
+
+
+class WiredNetworkPayload(BaseModel):
+    mode: str = Field(pattern="^(auto|manual)$")
+    ip_cidr: str | None = Field(default=None, max_length=64)
+    gateway: str | None = Field(default=None, max_length=64)
+    dns: str | None = Field(default=None, max_length=256)
 
 
 def serialize_session(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -579,6 +587,7 @@ def status():
             "active_session_latest_readings": latest_history,
             "scheduler_error": LOGGER_STATE.last_error,
             "disk": build_disk_stats(),
+            "network": network_manager_status(),
         }
 
 
@@ -610,6 +619,29 @@ def update_sensor_slots(payload: SensorSlotsUpdatePayload):
                 "message": "Sensor slots updated.",
                 "items": build_runtime_sensor_slots(rows, detected_sensors),
             }
+
+
+@app.get("/api/network")
+def network_status():
+    return network_manager_status()
+
+
+@app.post("/api/network/wired")
+def update_wired_network(payload: WiredNetworkPayload):
+    try:
+        return {
+            "message": "Wired network settings applied.",
+            "network": apply_wired_network(
+                mode=payload.mode,
+                ip_cidr=payload.ip_cidr,
+                gateway=payload.gateway,
+                dns=payload.dns,
+            ),
+        }
+    except NetworkUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except NetworkConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/sessions")

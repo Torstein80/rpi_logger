@@ -15,4 +15,3 @@ certs/*.crt
 dist/
 build/
 .DS_Store
-project specs.txt

@@ -124,6 +124,44 @@
       </div>
     </section>
 
+    <section class="grid two-col">
+      <div class="card">
+        <h2>Network access</h2>
+        <div id="network-state" class="stack">
+          <div class="hint">Waiting for first refresh…</div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Wired network settings</h2>
+        <div class="hint">Use this over the rescue Wi-Fi AP to switch the wired port between DHCP and a fixed IPv4 address.</div>
+        <form id="network-form" class="stack">
+          <label>
+            Wired mode
+            <select id="wired-mode">
+              <option value="auto">DHCP</option>
+              <option value="manual">Fixed IP</option>
+            </select>
+          </label>
+          <label>
+            Wired IPv4 / CIDR
+            <input id="wired-ip-cidr" type="text" placeholder="10.87.0.5/24" />
+          </label>
+          <label>
+            Gateway
+            <input id="wired-gateway" type="text" placeholder="10.87.0.1" />
+          </label>
+          <label>
+            DNS servers
+            <input id="wired-dns" type="text" placeholder="10.87.0.1 1.1.1.1" />
+          </label>
+          <div class="actions">
+            <button type="submit">Apply wired settings</button>
+          </div>
+        </form>
+        <div id="network-message" class="message"></div>
+      </div>
+    </section>
+
     <section class="card chart-card">
       <div class="section-heading">
         <div>
@@ -269,6 +307,13 @@
     const activeSessionBox = document.getElementById("active-session-box");
     const schedulerState = document.getElementById("scheduler-state");
     const storageState = document.getElementById("storage-state");
+    const networkState = document.getElementById("network-state");
+    const networkForm = document.getElementById("network-form");
+    const networkMessage = document.getElementById("network-message");
+    const wiredModeSelect = document.getElementById("wired-mode");
+    const wiredIpCidrInput = document.getElementById("wired-ip-cidr");
+    const wiredGatewayInput = document.getElementById("wired-gateway");
+    const wiredDnsInput = document.getElementById("wired-dns");
     const trendChart = document.getElementById("trend-chart");
     const chartLegend = document.getElementById("chart-legend");
     const chartCaption = document.getElementById("chart-session-caption");
@@ -644,6 +689,88 @@
       `;
     }
 
+
+    function setNetworkManualDisabled() {
+      const disabled = wiredModeSelect.value !== 'manual';
+      wiredIpCidrInput.disabled = disabled;
+      wiredGatewayInput.disabled = disabled;
+      wiredDnsInput.disabled = disabled;
+    }
+
+    function renderNetwork(status) {
+      const network = status.network || {};
+      if (!network.available) {
+        networkState.innerHTML = `
+          <div><strong>Hostname:</strong> ${safeText(network.hostname)}</div>
+          <div><strong>mDNS URL:</strong> ${safeText(network.hostname_url)}</div>
+          <div class="hint error-text">${safeText(network.reason, 'Network manager integration is unavailable.')}</div>
+        `;
+        networkForm.querySelectorAll('input, select, button').forEach((el) => el.disabled = true);
+        return;
+      }
+
+      networkForm.querySelectorAll('input, select, button').forEach((el) => el.disabled = false);
+      const ap = network.ap || {};
+      const wired = network.wired || {};
+      wiredModeSelect.value = wired.mode === 'manual' ? 'manual' : 'auto';
+      wiredIpCidrInput.value = (wired.configured_addresses || [])[0] || '';
+      wiredGatewayInput.value = wired.gateway || '';
+      wiredDnsInput.value = (wired.dns || []).join(' ');
+      setNetworkManualDisabled();
+
+      const urlList = (network.urls || []).map((url) => `<div class="network-url">${url}</div>`).join('');
+      networkState.innerHTML = `
+        <div><strong>Hostname:</strong> ${safeText(network.hostname)}</div>
+        <div><strong>mDNS URL:</strong> ${safeText(network.hostname_url)}</div>
+        ${urlList ? `<div><strong>Reach the logger at:</strong></div><div class="stack compact">${urlList}</div>` : ''}
+        <hr />
+        <div><strong>Rescue AP SSID:</strong> ${safeText(ap.ssid, 'Not configured')}</div>
+        <div><strong>AP interface:</strong> ${safeText(ap.interface)}</div>
+        <div><strong>AP state:</strong> ${safeText(ap.state)}</div>
+        <div><strong>AP URL:</strong> ${safeText(ap.url)}</div>
+        <hr />
+        <div><strong>Wired interface:</strong> ${safeText(wired.interface)}</div>
+        <div><strong>Wired profile:</strong> ${safeText(wired.connection_name)}</div>
+        <div><strong>Wired mode:</strong> ${safeText(wired.mode, 'unknown')}</div>
+        <div><strong>Wired state:</strong> ${safeText(wired.state)}</div>
+        <div><strong>Wired active IP:</strong> ${safeText((wired.active_addresses || []).join(', '))}</div>
+        <div><strong>Wired configured IP:</strong> ${safeText((wired.configured_addresses || []).join(', '))}</div>
+        <div><strong>Wired gateway:</strong> ${safeText(wired.gateway)}</div>
+        <div><strong>Wired DNS:</strong> ${safeText((wired.dns || []).join(', '))}</div>
+      `;
+    }
+
+    async function applyWiredNetwork(event) {
+      event.preventDefault();
+      networkMessage.textContent = '';
+      const mode = wiredModeSelect.value;
+      const confirmText = mode === 'manual'
+        ? `Apply fixed wired IPv4 address ${wiredIpCidrInput.value.trim() || '(empty)'}?`
+        : 'Switch the wired Ethernet profile to DHCP?';
+      if (!window.confirm(confirmText)) {
+        return;
+      }
+      const response = await fetch('/api/network/wired', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode,
+          ip_cidr: wiredIpCidrInput.value.trim() || null,
+          gateway: wiredGatewayInput.value.trim() || null,
+          dns: wiredDnsInput.value.trim() || null,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        networkMessage.textContent = data.detail || 'Could not apply wired settings.';
+        networkMessage.className = 'message error';
+        return;
+      }
+      networkMessage.textContent = data.message || 'Wired settings applied.';
+      networkMessage.className = 'message success';
+      renderNetwork({ network: data.network });
+    }
+
     function renderLatestReadings(items) {
       if (!items || !items.length) {
         latestReadingsBody.innerHTML = '<tr><td colspan="6">No readings yet.</td></tr>';
@@ -899,6 +1026,7 @@
         renderDetectedSensors(status);
         renderSchedulerState(status);
         renderStorage(status);
+        renderNetwork(status);
         sensorSlotsState = (status.configured_slots || []).map((item) => ({
           slot_no: item.slot_no,
           enabled: item.enabled,
@@ -929,6 +1057,8 @@
 
     document.getElementById('save-slots-btn').addEventListener('click', saveSlots);
     document.getElementById('start-form').addEventListener('submit', createSession);
+    networkForm.addEventListener('submit', applyWiredNetwork);
+    wiredModeSelect.addEventListener('change', setNetworkManualDisabled);
 
     timezoneLocationSelect.addEventListener('change', () => {
       updateTimezoneOffsetInput();
@@ -969,6 +1099,7 @@
     }
     updateTimezoneOffsetInput();
     updateEpochPreview();
+    setNetworkManualDisabled();
     populateSlotEditors([]);
     renderTrendChart(initialChartSession, chartSeedRows);
     refreshAll();

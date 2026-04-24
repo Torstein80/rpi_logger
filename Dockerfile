@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl tzdata \
+    && apt-get install -y --no-install-recommends ca-certificates curl tzdata network-manager dbus \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -15,11 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app /app/app
 
-RUN useradd --create-home --shell /usr/sbin/nologin appuser \
-    && mkdir -p /data /certs \
-    && chown -R appuser:appuser /app /data /certs
+RUN mkdir -p /data /certs
 
-USER appuser
 
 EXPOSE 8080
 

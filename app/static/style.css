@@ -522,3 +522,26 @@ button:disabled {
   font-size: 10px;
   fill: rgba(148, 163, 184, 0.75);
 }
+
+
+.stack.compact {
+  gap: 6px;
+}
+
+.network-url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+  word-break: break-all;
+  color: var(--text);
+}
+
+input:disabled,
+select:disabled {
+  opacity: 0.65;
+}
+
+.card hr {
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  margin: 8px 0;
+}

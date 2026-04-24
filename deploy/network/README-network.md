@@ -10,6 +10,7 @@ This folder adds an OS-level network setup for Raspberry Pi OS Bookworm using Ne
 - Creates a wired `eth0` profile that can run in either:
   - **DHCP** mode, or
   - **manual/static** mode, for example `10.87.0.5/24`
+- Exposes the current network status and wired IP settings inside the logger web UI, so you can switch `eth0` between DHCP and a fixed IP while connected through the rescue AP
 
 ## Why this design
 
@@ -57,8 +58,26 @@ WIRED_GATEWAY=10.87.0.1
 WIRED_DNS=10.87.0.1 1.1.1.1
 ```
 
+## Web UI control of the wired IP
+
+After the AP has been set up and the updated container is running, the main logger page includes a **Wired network settings** card. From there you can:
+
+- view the rescue AP URL and current hostname
+- see the current wired connection name and active IP
+- switch wired `eth0` between **DHCP** and **Fixed IP**
+- enter IPv4 / CIDR, gateway, and DNS when Fixed IP is selected
+
+For this to work, the container must have:
+
+- `nmcli` installed
+- `/run/dbus/system_bus_socket` mounted from the host
+- `/etc/machine-id` mounted read-only from the host
+
+The provided Docker Compose and Portainer stack files already include those mounts.
+
 ## Notes
 
 - A static wired IP only works if it matches the wired network you plug into.
 - On unknown customer networks, **DHCP is still the safest default**.
 - The rescue AP gives you a second path into the logger even if the wired network addressing is unknown.
+- The setup script can optionally bring down an existing Wi-Fi client connection on `wlan0`, because the same radio normally cannot stay connected to another Wi-Fi network and host an AP at the same time.
