@@ -397,6 +397,15 @@ a:hover { text-decoration: underline; }
   pointer-events: none;
 }
 
+
+#trend-chart.fill-off .series-fill {
+  display: none !important;
+}
+
+#trend-chart.fill-soft .series-fill {
+  display: block;
+}
+
 .chart-point {
   stroke: rgba(15, 23, 42, 0.9);
   stroke-width: 1;

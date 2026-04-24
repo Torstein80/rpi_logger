@@ -752,6 +752,7 @@
     function renderTrendChart(session, rows) {
       chartLegend.innerHTML = '';
       trendChart.innerHTML = '';
+      trendChart.classList.remove('fill-off', 'fill-soft');
       hideChartTooltip();
       if (!session || !rows || !rows.length) {
         chartCaption.textContent = 'No readings to plot yet.';
@@ -762,7 +763,8 @@
       const options = chartOptions();
       const pointRadius = visiblePointRadius(options.style);
       const lineWidth = options.lineWidth;
-      const fillOpacity = options.fill === 'soft' ? 0.12 : 0;
+      const fillOpacity = options.fill === 'soft' ? 0.08 : 0;
+      trendChart.classList.add(options.fill === 'soft' ? 'fill-soft' : 'fill-off');
 
       const width = 800;
       const height = 260;
@@ -810,7 +812,7 @@
           return { x, y };
         });
 
-        if (fillOpacity > 0) {
+        if (fillOpacity > 0 && pointObjects.length >= 2) {
           const fillPath = buildFillPath(pointObjects, height - paddingBottom, options.curve);
           if (options.curve === 'smooth') {
             trendChart.innerHTML += `<path d="${fillPath}" class="series-fill ${cssClass}" style="opacity:${fillOpacity}" />`;
