@@ -462,7 +462,7 @@ a:hover { text-decoration: underline; }
 }
 
 @media (max-width: 760px) {
-  .container { padding: 16px; }
+  .container { padding: 14px; }
   .hero,
   .section-heading,
   .slot-runtime-head,
@@ -470,6 +470,22 @@ a:hover { text-decoration: underline; }
   .sensor-row {
     grid-template-columns: 1fr;
     display: grid;
+  }
+  .hero h1 { font-size: 1.7rem; }
+  .chart-controls { justify-content: stretch; }
+  .chart-control,
+  .chart-control select,
+  button,
+  .button-secondary,
+  .button-danger {
+    width: 100%;
+    min-width: 0;
+  }
+  .actions-cell {
+    flex-direction: column;
+  }
+  #trend-chart {
+    height: 260px;
   }
   table { min-width: 640px; }
 }

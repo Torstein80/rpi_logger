@@ -254,6 +254,39 @@ That gives you a flexible path for local testing and for Raspberry Pi deployment
 
 ---
 
+
+## Rescue Wi-Fi AP for phones and unknown networks
+
+If you want a reliable way to reach the logger on networks where you do not control DHCP, use the rescue AP setup in `deploy/network/`.
+
+This adds:
+
+- a Wi-Fi access point on `wlan0` for direct phone access
+- an easy-to-remember URL such as `http://10.77.0.1:8080`
+- a fixed hostname such as `hagasolutions-rpi-logger.local`
+- an `eth0` connection profile that can run either **DHCP** or **manual/static** addressing
+
+Quick start:
+
+```bash
+cp deploy/network/fallback-ap.env.example deploy/network/fallback-ap.env
+nano deploy/network/fallback-ap.env
+sudo bash deploy/network/setup-fallback-ap.sh deploy/network/fallback-ap.env
+```
+
+Suggested values for a phone-friendly rescue path:
+
+```dotenv
+AP_SSID=hagasolutions-rpi-logger
+AP_PASSWORD=ChangeMe1234
+AP_ADDRESS_CIDR=10.77.0.1/24
+WIRED_MODE=auto
+```
+
+If you really need a fixed wired address on a known network, change the wired settings to manual and set `WIRED_IP_CIDR`, `WIRED_GATEWAY`, and `WIRED_DNS`.
+
+---
+
 ## 7. Local development in VS Code
 
 Recommended workflow:
