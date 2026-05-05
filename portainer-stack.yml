@@ -22,6 +22,11 @@ services:
       NETWORK_AP_CONNECTION_NAME: "haga-fallback-ap"
       NETWORK_WIRED_INTERFACE: "eth0"
       NETWORK_WIRED_CONNECTION_NAME: "haga-eth0"
+      STORAGE_HEARTBEAT_PATH: "/data/heartbeat.json"
+      STORAGE_PROBE_INTERVAL_SECONDS: "15"
+      STORAGE_LOW_FREE_GB_WARNING: "2.0"
+      STORAGE_WATCHDOG_ENABLED: "true"
+      STORAGE_WATCHDOG_REBOOT_AFTER_SECONDS: "600"
     volumes:
       - /opt/haga-logger/data:/data
       - /opt/haga-logger/certs:/certs:ro
