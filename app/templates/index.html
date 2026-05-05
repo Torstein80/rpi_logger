@@ -21,6 +21,12 @@
       </div>
     </header>
 
+    <section id="storage-health-banner" class="card health-banner health-unknown">
+      <div id="storage-health-banner-content" class="stack">
+        <div class="hint">Waiting for first refresh…</div>
+      </div>
+    </section>
+
     <section class="grid two-col">
       <div class="card">
         <h2>Start logging</h2>
@@ -291,6 +297,7 @@
     const chartSeedRows = {{ chart_seed_rows | tojson }};
     const sensorSlotsSeed = {{ sensor_slots | tojson }};
     const timezoneLocations = {{ timezone_locations | tojson }};
+    const initialDbError = {{ initial_db_error | tojson }};
 
     const startEpochInput = document.getElementById("start-epoch");
     const intervalInput = document.getElementById("interval-seconds");
@@ -307,6 +314,8 @@
     const activeSessionBox = document.getElementById("active-session-box");
     const schedulerState = document.getElementById("scheduler-state");
     const storageState = document.getElementById("storage-state");
+    const storageHealthBanner = document.getElementById("storage-health-banner");
+    const storageHealthBannerContent = document.getElementById("storage-health-banner-content");
     const networkState = document.getElementById("network-state");
     const networkForm = document.getElementById("network-form");
     const networkMessage = document.getElementById("network-message");
@@ -667,6 +676,38 @@
       `).join("");
     }
 
+    function renderStorageHealthBanner(status) {
+      const storage = status.storage || {};
+      const level = storage.summary_level || 'unknown';
+      storageHealthBanner.className = `card health-banner health-${level}`;
+      const dbWritableText = storage.db_open_ok && storage.directory_writable ? 'yes' : 'no';
+      const heartbeatText = storage.heartbeat_last_epoch ? formatEpochLocal(storage.heartbeat_last_epoch, '+00:00') + ' UTC' : '-';
+      const lastWriteText = storage.last_db_write_epoch ? formatEpochLocal(storage.last_db_write_epoch, '+00:00') + ' UTC' : '-';
+      const lastOkText = storage.last_storage_ok_epoch ? formatEpochLocal(storage.last_storage_ok_epoch, '+00:00') + ' UTC' : '-';
+      const unwritableText = storage.storage_unwritable_since_epoch ? formatEpochLocal(storage.storage_unwritable_since_epoch, '+00:00') + ` UTC (${safeText(storage.unwritable_for_seconds, 0)} s)` : '-';
+      storageHealthBannerContent.innerHTML = `
+        <div class="section-heading">
+          <div>
+            <h2>Storage health</h2>
+            <div class="hint">${safeText(storage.summary, initialDbError || 'Waiting for first storage probe…')}</div>
+          </div>
+          <div>${statusBadge(level)}</div>
+        </div>
+        <div class="health-grid">
+          <div><strong>DB writable:</strong> ${dbWritableText}</div>
+          <div><strong>Last DB write:</strong> ${lastWriteText}</div>
+          <div><strong>Heartbeat:</strong> ${heartbeatText}</div>
+          <div><strong>Last known good:</strong> ${lastOkText}</div>
+          <div><strong>Unwritable since:</strong> ${unwritableText}</div>
+          <div><strong>Watchdog:</strong> ${storage.watchdog_enabled ? `enabled (${safeText(storage.watchdog_reboot_after_seconds)} s)` : 'disabled'}</div>
+        </div>
+        ${(storage.db_open_error || storage.directory_write_error || storage.heartbeat_error || status.database_error || storage.watchdog_last_error) ? `
+          <div class="hint error-text">
+            ${[storage.db_open_error, storage.directory_write_error, storage.heartbeat_error, status.database_error, storage.watchdog_last_error].filter(Boolean).join(' | ')}
+          </div>` : ''}
+      `;
+    }
+
     function renderSchedulerState(status) {
       schedulerState.innerHTML = `
         <div><strong>Hostname:</strong> ${safeText(status.host_name)}</div>
@@ -675,17 +716,29 @@
         <div><strong>Configured UI poll:</strong> ${status.configured_poll_seconds} s</div>
         <div><strong>Detected sensors:</strong> ${status.sensor_count}</div>
         <div><strong>Scheduler error:</strong> ${safeText(status.scheduler_error, 'none')}</div>
+        <div><strong>Database error:</strong> ${safeText(status.database_error, 'none')}</div>
       `;
     }
 
     function renderStorage(status) {
-      const disk = status.disk || {};
+      const storage = status.storage || {};
       storageState.innerHTML = `
-        <div><strong>Database path:</strong> ${safeText(disk.db_path)}</div>
-        <div><strong>Database size:</strong> ${safeText(disk.db_size_mb, 0)} MiB</div>
-        <div><strong>Used:</strong> ${safeText(disk.used_gb, 0)} GiB (${safeText(disk.used_percent, 0)}%)</div>
-        <div><strong>Free:</strong> ${safeText(disk.free_gb, 0)} GiB</div>
-        <div><strong>Total:</strong> ${safeText(disk.total_gb, 0)} GiB</div>
+        <div><strong>Database path:</strong> ${safeText(storage.db_path)}</div>
+        <div><strong>Heartbeat path:</strong> ${safeText(storage.heartbeat_path)}</div>
+        <div><strong>Database size:</strong> ${safeText(storage.db_size_mb, 0)} MiB</div>
+        <div><strong>Directory writable test:</strong> ${storage.directory_writable ? 'pass' : 'fail'}</div>
+        <div><strong>DB open test:</strong> ${storage.db_open_ok ? 'pass' : 'fail'}</div>
+        <div><strong>Heartbeat write:</strong> ${storage.heartbeat_ok ? 'ok' : 'not yet / failed'}</div>
+        <div><strong>Last DB write:</strong> ${storage.last_db_write_epoch ? formatEpochLocal(storage.last_db_write_epoch, '+00:00') + ' UTC' : '-'}</div>
+        <div><strong>Last storage ok:</strong> ${storage.last_storage_ok_epoch ? formatEpochLocal(storage.last_storage_ok_epoch, '+00:00') + ' UTC' : '-'}</div>
+        <div><strong>Unwritable since:</strong> ${storage.storage_unwritable_since_epoch ? formatEpochLocal(storage.storage_unwritable_since_epoch, '+00:00') + ' UTC' : '-'}</div>
+        <div><strong>Used:</strong> ${safeText(storage.used_gb, 0)} GiB (${safeText(storage.used_percent, 0)}%)</div>
+        <div><strong>Free:</strong> ${safeText(storage.free_gb, 0)} GiB</div>
+        <div><strong>Total:</strong> ${safeText(storage.total_gb, 0)} GiB</div>
+        <div><strong>Watchdog reboot:</strong> ${storage.watchdog_enabled ? `enabled after ${safeText(storage.watchdog_reboot_after_seconds)} s` : 'disabled'}</div>
+        <div><strong>Reboot attempts:</strong> ${safeText(storage.watchdog_reboot_attempts, 0)}</div>
+        ${(storage.disk_error || storage.db_open_error || storage.directory_write_error || storage.heartbeat_error || storage.watchdog_last_error) ? `
+          <div class="hint error-text">${[storage.disk_error, storage.db_open_error, storage.directory_write_error, storage.heartbeat_error, storage.watchdog_last_error].filter(Boolean).join(' | ')}</div>` : ''}
       `;
     }
 
@@ -1072,6 +1125,7 @@
 
       if (statusResponse.ok) {
         const status = await statusResponse.json();
+        renderStorageHealthBanner(status);
         renderActiveSession(status.active_session);
         renderConfiguredSlots(status);
         renderDetectedSensors(status);
@@ -1153,6 +1207,7 @@
     setNetworkManualDisabled();
     populateSlotEditors([]);
     renderTrendChart(initialChartSession, chartSeedRows);
+    renderStorageHealthBanner({ storage: { summary_level: initialDbError ? "bad" : "unknown", summary: initialDbError || "Waiting for first storage probe…" }, database_error: initialDbError });
     refreshAll();
     setInterval(refreshAll, DEFAULT_POLL_SECONDS * 1000);
   </script>
