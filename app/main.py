@@ -775,16 +775,24 @@ def sample_session(conn: sqlite3.Connection, session_row: sqlite3.Row, sample_ep
 
 def scheduler_loop() -> None:
     while True:
+        current_epoch = now_epoch()
         try:
             with LOGGER_LOCK:
+                if (
+                    LOGGER_STATE.storage_last_probe_epoch is None
+                    or current_epoch - LOGGER_STATE.storage_last_probe_epoch >= STORAGE_PROBE_INTERVAL_SECONDS
+                ):
+                    probe = probe_storage_health(current_epoch=current_epoch, write_heartbeat=True)
+                    update_storage_probe_state(probe)
+                    maybe_trigger_storage_watchdog(probe)
+
                 with db_session() as conn:
                     target = fetch_active_or_scheduled(conn)
                     if target is None:
                         LOGGER_STATE.active_session_id = None
-                        LOGGER_STATE.last_cycle_epoch = now_epoch()
+                        LOGGER_STATE.last_cycle_epoch = current_epoch
                         LOGGER_STATE.last_error = None
                     else:
-                        current_epoch = now_epoch()
                         if target["status"] == SESSION_STATUS_SCHEDULED and current_epoch >= target["scheduled_start_epoch"]:
                             target = mark_session_running(conn, target["id"], current_epoch)
                             LOGGER_STATE.active_session_id = target["id"]
