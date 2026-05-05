@@ -2,7 +2,7 @@ name: build-and-publish-container
 
 on:
   push:
-    branches: ["main"]
+    branches: ["development"]
     tags: ["v*"]
   workflow_dispatch:
 
